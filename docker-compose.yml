@@ -1,0 +1,48 @@
+services:
+  postgres:
+    build:
+      context: ./servers/postgres
+      dockerfile: Dockerfile
+    container_name: voting-db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - voting-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voting_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./servers/backend
+      dockerfile: Dockerfile
+    container_name: voting-backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - voting-network
+
+volumes:
+  postgres_data:
+
+networks:
+  voting-network:
+    driver: bridge
