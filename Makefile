@@ -14,6 +14,16 @@ clean:
 	docker-compose down -v
 	@echo "Containers and volumes removed"
 
+fclean: clean
+	docker rm -f $$(docker ps -aq) 2>/dev/null || true
+	docker rmi -f $$(docker images -q) 2>/dev/null || true
+	@echo "All containers and images removed"
+
+prune:
+	docker volume rm voting_postgres_data 2>/dev/null || true
+	docker network prune -f
+	@echo "Volume and networks removed"
+
 re: clean all
 	docker-compose up -d
 	@echo "Rebuild complete. Containers running."
@@ -25,8 +35,8 @@ help:
 	@echo "  make run    - Build and run containers in background"
 	@echo "  make stop   - Stop containers"
 	@echo "  make clean  - Stop containers and remove volumes"
+	@echo "  make fclean - Stop containers, remove volumes and delete images"
+	@echo "  make prune  - Delete the postgres volume"
 	@echo "  make re     - Clean, rebuild, and run"
 
-re: clean build
-
-.PHONY: all build run stop clean re
+.PHONY: all build run stop clean fclean prune re

@@ -16,18 +16,36 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// API routes
+	// Auth routes (public)
 	switch {
-	case path == "/categories" && r.Method == "GET":
-		GetCategories(w, r)
-	case path == "/categories" && r.Method == "POST":
-		CreateCategory(w, r)
-	case strings.HasPrefix(path, "/categories/") && r.Method == "GET":
-		GetCategory(w, r)
+	case path == "/auth/register" && r.Method == "POST":
+		RegisterHandler(w, r)
+	case path == "/auth/login" && r.Method == "POST":
+		LoginHandler(w, r)
+	case path == "/auth/logout" && r.Method == "POST":
+		LogoutHandler(w, r)
+	
+	// Event routes (check most specific first)
+	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
+		GetEventResultsHandler(w, r)
+	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/invitations") && r.Method == "POST":
+		RequireAuth(CreateInvitationHandler)(w, r)
+	case strings.HasPrefix(path, "/events/") && r.Method == "GET":
+		GetEventHandler(w, r)
+	case path == "/events" && r.Method == "GET":
+		GetEventsHandler(w, r)
+	case path == "/events" && r.Method == "POST":
+		RequireAuth(CreateEventHandler)(w, r)
+	case strings.HasPrefix(path, "/invitations/") && r.Method == "POST":
+		RedeemInvitationHandler(w, r)
+	
+	// Voting routes
 	case path == "/votes" && r.Method == "POST":
-		RecordVote(w, r)
-	case strings.HasPrefix(path, "/results/") && r.Method == "GET":
-		GetResults(w, r)
+		RequireAuth(RecordVoteHandler)(w, r)
+	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
+		GetEventResultsHandler(w, r)
+	
+
 	default:
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
@@ -38,7 +56,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
