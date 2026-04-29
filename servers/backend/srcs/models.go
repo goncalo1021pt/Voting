@@ -17,7 +17,6 @@ type Event struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Visibility  string    `json:"visibility"` // "public" or "invite-only"
-	ResultsVisibility string `json:"results_visibility"` // "after_conclusion" or "live"
 	IsActive    bool      `json:"is_active"`
 	CreatedAt   time.Time `json:"created_at"`
 	Categories  []Category `json:"categories,omitempty"`
@@ -101,11 +100,10 @@ type AuthResponse struct {
 
 // Event creation request
 type CreateEventRequest struct {
-	Name              string                  `json:"name"`
-	Description       string                  `json:"description"`
-	Visibility        string                  `json:"visibility"`
-	ResultsVisibility string                  `json:"results_visibility"`
-	Categories        []CreateCategoryRequest `json:"categories"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Visibility  string   `json:"visibility"`
+	Categories  []CreateCategoryRequest `json:"categories"`
 }
 
 // Category creation request
