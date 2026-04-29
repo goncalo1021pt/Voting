@@ -4,11 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,8 +55,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token
-	token := generateToken(user.ID)
+	// Generate token and persist session
+	token, err := issueSession(user.ID)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -97,8 +101,12 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token
-	token := generateToken(user.ID)
+	// Generate token and persist session
+	token, err := issueSession(user.ID)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -108,67 +116,55 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetUserFromToken extracts user ID from Authorization header
-// Format: "Bearer <token>"
-func GetUserFromToken(r *http.Request) (int, error) {
+// extractBearerToken pulls the raw token out of the Authorization header.
+func extractBearerToken(r *http.Request) (string, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return 0, fmt.Errorf("missing authorization header")
+		return "", fmt.Errorf("missing authorization header")
 	}
-
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		return 0, fmt.Errorf("invalid authorization header format")
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" || parts[1] == "" {
+		return "", fmt.Errorf("invalid authorization header format")
 	}
+	return parts[1], nil
+}
 
-	token := parts[1]
-	userID, err := verifyToken(token)
+// GetUserFromToken validates the bearer token against the sessions table and
+// slides its expiry. Returns the authenticated user ID.
+func GetUserFromToken(r *http.Request) (int, error) {
+	token, err := extractBearerToken(r)
 	if err != nil {
 		return 0, err
 	}
-
+	userID, err := VerifyAndSlideSessionInDB(token)
+	if err != nil {
+		return 0, err
+	}
 	return userID, nil
 }
 
-// generateToken creates a simple token with user ID and expiration
-// In production, use JWT or a proper session management library
-func generateToken(userID int) string {
-	// Create a simple token: userID:timestamp:random
-	timestamp := time.Now().Unix()
-	randomBytes := make([]byte, 16)
-	rand.Read(randomBytes)
-	randomStr := hex.EncodeToString(randomBytes)
-
-	token := fmt.Sprintf("%d:%d:%s", userID, timestamp, randomStr)
-	// In production, sign this token with a secret key
-
-	return token
+// issueSession generates a 32-byte random token, persists a session row, and
+// returns the token to hand back to the caller.
+func issueSession(userID int) (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
+	}
+	token := hex.EncodeToString(buf)
+	if err := CreateSessionInDB(token, userID); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
-// verifyToken parses and validates a token
-// In production, use JWT verification
-func verifyToken(token string) (int, error) {
-	parts := strings.Split(token, ":")
-	if len(parts) != 3 {
-		return 0, fmt.Errorf("invalid token format")
-	}
-
-	var userID int
-	if _, err := fmt.Sscanf(parts[0], "%d", &userID); err != nil {
-		return 0, fmt.Errorf("invalid token")
-	}
-
-	// In production, verify signature and check expiration
-	// For now, just validate the format
-
-	return userID, nil
-}
-
-// RequireAuth is middleware that checks for valid authentication
+// RequireAuth is middleware that checks for valid authentication.
 func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, err := GetUserFromToken(r)
-		if err != nil {
+		if _, err := GetUserFromToken(r); err != nil {
+			if errors.Is(err, ErrSessionInvalid) {
+				http.Error(w, "Session expired", http.StatusUnauthorized)
+				return
+			}
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -176,14 +172,18 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// LogoutHandler clears the token (client-side deletion)
+// LogoutHandler invalidates the caller's session.
 func LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// In a real implementation with sessions, delete the session here
+	token, err := extractBearerToken(r)
+	if err == nil && token != "" {
+		_ = DeleteSessionInDB(token)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	io.WriteString(w, `{"message":"Logged out successfully"}`)
 }

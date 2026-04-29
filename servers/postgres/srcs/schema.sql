@@ -7,6 +7,14 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sessions table (opaque bearer tokens with sliding 30-day expiry)
+CREATE TABLE sessions (
+    token VARCHAR(64) PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL
+);
+
 -- Events table (voting events created by users, replaces "votings")
 CREATE TABLE events (
     id SERIAL PRIMARY KEY,
@@ -67,6 +75,8 @@ CREATE TABLE votes (
 );
 
 -- Create indexes for better query performance
+CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX idx_events_host_id ON events(host_id);
 CREATE INDEX idx_events_is_active ON events(is_active);
 CREATE INDEX idx_event_members_event_id ON event_members(event_id);
