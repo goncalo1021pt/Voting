@@ -30,10 +30,6 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		GetEventResultsHandler(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/invitations") && r.Method == "POST":
 		RequireAuth(CreateInvitationHandler)(w, r)
-	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/join") && r.Method == "POST":
-		RequireAuth(JoinEventHandler)(w, r)
-	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/close") && r.Method == "POST":
-		RequireAuth(CloseEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":
 		GetEventHandler(w, r)
 	case path == "/events" && r.Method == "GET":
@@ -42,10 +38,13 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(CreateEventHandler)(w, r)
 	case strings.HasPrefix(path, "/invitations/") && r.Method == "POST":
 		RedeemInvitationHandler(w, r)
-
+	
 	// Voting routes
 	case path == "/votes" && r.Method == "POST":
 		RequireAuth(RecordVoteHandler)(w, r)
+	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
+		GetEventResultsHandler(w, r)
+	
 
 	default:
 		http.Error(w, "Not found", http.StatusNotFound)

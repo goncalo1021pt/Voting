@@ -14,7 +14,6 @@ CREATE TABLE events (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     visibility VARCHAR(50) DEFAULT 'invite-only' CHECK (visibility IN ('public', 'invite-only')),
-    results_visibility VARCHAR(50) DEFAULT 'after_conclusion' CHECK (results_visibility IN ('after_conclusion', 'live')),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
