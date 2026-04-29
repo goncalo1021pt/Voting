@@ -2,19 +2,32 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+const frontendDir = "frontend"
+
+// serveFrontend serves a file from frontend/ if it exists, otherwise falls
+// back to index.html (so client-side routes resolve on hard refresh).
+func serveFrontend(w http.ResponseWriter, r *http.Request) {
+	clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if clean == "" || clean == "." || strings.HasPrefix(clean, "..") {
+		clean = "index.html"
+	}
+	full := filepath.Join(frontendDir, clean)
+	if info, err := os.Stat(full); err == nil && !info.IsDir() {
+		http.ServeFile(w, r, full)
+		return
+	}
+	// SPA fallback
+	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
+}
 
 // RouteHandler handles all incoming requests
 func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-
-	// Static files (HTML frontend)
-	if path == "/" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeFile(w, r, "frontend/index.html")
-		return
-	}
 
 	// Auth routes (public)
 	switch {
@@ -48,6 +61,12 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(RecordVoteHandler)(w, r)
 
 	default:
+		// Anything else: serve the frontend (file or SPA fallback) for GET,
+		// otherwise 404.
+		if r.Method == http.MethodGet {
+			serveFrontend(w, r)
+			return
+		}
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
 }
