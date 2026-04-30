@@ -1,7 +1,7 @@
 services:
   postgres:
     build:
-      context: ./servers/postgres
+      context: ./postgres
       dockerfile: Dockerfile
     container_name: voting-db
     environment:
@@ -22,8 +22,8 @@ services:
 
   backend:
     build:
-      context: ./servers/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: voting-backend
     ports:
       - "8080:8080"
