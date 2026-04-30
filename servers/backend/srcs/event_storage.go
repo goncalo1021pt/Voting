@@ -6,19 +6,28 @@ import (
 	"time"
 )
 
-// GetEventsFromDB retrieves all public events and user's events
+// GetEventsFromDB retrieves all public events and events the user is part of.
+// When userID > 0, each row includes an is_member flag for that user.
 func GetEventsFromDB(userID int) ([]Event, error) {
-	const baseSelect = "SELECT id, host_id, name, description, visibility, results_visibility, is_active, created_at FROM events"
-
 	var rows *sql.Rows
 	var err error
 	if userID > 0 {
-		rows, err = db.Query(
-			baseSelect+" WHERE visibility = 'public' OR host_id = $1 OR id IN (SELECT event_id FROM event_members WHERE user_id = $1) ORDER BY created_at DESC",
-			userID,
-		)
+		rows, err = db.Query(`
+			SELECT e.id, e.host_id, e.name, e.description, e.visibility, e.results_visibility, e.is_active, e.created_at,
+			       EXISTS(SELECT 1 FROM event_members em WHERE em.event_id = e.id AND em.user_id = $1) AS is_member
+			FROM events e
+			WHERE e.visibility = 'public'
+			   OR e.host_id = $1
+			   OR EXISTS(SELECT 1 FROM event_members em2 WHERE em2.event_id = e.id AND em2.user_id = $1)
+			ORDER BY e.created_at DESC
+		`, userID)
 	} else {
-		rows, err = db.Query(baseSelect + " WHERE visibility = 'public' ORDER BY created_at DESC")
+		rows, err = db.Query(`
+			SELECT id, host_id, name, description, visibility, results_visibility, is_active, created_at, false AS is_member
+			FROM events
+			WHERE visibility = 'public'
+			ORDER BY created_at DESC
+		`)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch events: %w", err)
@@ -28,7 +37,7 @@ func GetEventsFromDB(userID int) ([]Event, error) {
 	events := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.HostID, &e.Name, &e.Description, &e.Visibility, &e.ResultsVisibility, &e.IsActive, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.HostID, &e.Name, &e.Description, &e.Visibility, &e.ResultsVisibility, &e.IsActive, &e.CreatedAt, &e.IsMember); err != nil {
 			return nil, fmt.Errorf("failed to scan event row: %w", err)
 		}
 		events = append(events, e)
@@ -40,7 +49,7 @@ func GetEventsFromDB(userID int) ([]Event, error) {
 }
 
 // CreateEventInDB creates a new event with categories and options
-func CreateEventInDB(hostID int, name, description, visibility, resultsVisibility string, categories []CreateCategoryRequest) (*Event, error) {
+func CreateEventInDB(hostID int, name, description, visibility, resultsVisibility string, requireFullBallot bool, categories []CreateCategoryRequest) (*Event, error) {
 	if resultsVisibility == "" {
 		resultsVisibility = "after_conclusion"
 	}
@@ -53,8 +62,8 @@ func CreateEventInDB(hostID int, name, description, visibility, resultsVisibilit
 
 	var eventID int
 	err = tx.QueryRow(
-		"INSERT INTO events (host_id, name, description, visibility, results_visibility) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-		hostID, name, description, visibility, resultsVisibility,
+		"INSERT INTO events (host_id, name, description, visibility, results_visibility, require_full_ballot) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+		hostID, name, description, visibility, resultsVisibility, requireFullBallot,
 	).Scan(&eventID)
 
 	if err != nil {
@@ -123,6 +132,7 @@ func CreateEventInDB(hostID int, name, description, visibility, resultsVisibilit
 		Visibility:        visibility,
 		ResultsVisibility: resultsVisibility,
 		IsActive:          true,
+		RequireFullBallot: requireFullBallot,
 		Categories:        eventCategories,
 	}, nil
 }
@@ -133,9 +143,9 @@ func GetEventFromDB(eventID int) (*Event, error) {
 	var createdAt time.Time
 
 	err := db.QueryRow(
-		"SELECT id, host_id, name, description, visibility, results_visibility, is_active, created_at FROM events WHERE id = $1",
+		"SELECT id, host_id, name, description, visibility, results_visibility, is_active, require_full_ballot, created_at FROM events WHERE id = $1",
 		eventID,
-	).Scan(&event.ID, &event.HostID, &event.Name, &event.Description, &event.Visibility, &event.ResultsVisibility, &event.IsActive, &createdAt)
+	).Scan(&event.ID, &event.HostID, &event.Name, &event.Description, &event.Visibility, &event.ResultsVisibility, &event.IsActive, &event.RequireFullBallot, &createdAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -406,6 +416,31 @@ func RecordVoteInDB(userID, categoryID, optionID int) (*Vote, error) {
 		UserID:     userID,
 		CreatedAt:  createdAt,
 	}, nil
+}
+
+// GetUserVotesForEventFromDB returns a map of categoryID → optionID for all
+// votes cast by the user in the given event.
+func GetUserVotesForEventFromDB(eventID, userID int) (map[int]int, error) {
+	rows, err := db.Query(`
+		SELECT v.category_id, v.option_id
+		FROM votes v
+		JOIN categories c ON c.id = v.category_id
+		WHERE c.event_id = $1 AND v.user_id = $2
+	`, eventID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user votes: %w", err)
+	}
+	defer rows.Close()
+
+	votes := map[int]int{}
+	for rows.Next() {
+		var catID, optID int
+		if err := rows.Scan(&catID, &optID); err != nil {
+			return nil, err
+		}
+		votes[catID] = optID
+	}
+	return votes, rows.Err()
 }
 
 // IsEventMemberFromDB reports whether the user has joined the event.

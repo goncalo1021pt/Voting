@@ -663,8 +663,16 @@ button:disabled, .btn:disabled {
     transition: border-color 160ms ease, background 160ms ease;
 }
 
-.vote-option:hover {
+.vote-option.selectable {
+    cursor: pointer;
+}
+
+.vote-option.selectable:hover {
     border-color: var(--rule-strong);
+}
+
+.vote-option:not(.selectable):hover {
+    border-color: var(--rule);
 }
 
 .vote-option.selected {
@@ -677,6 +685,37 @@ button:disabled, .btn:disabled {
     font-variation-settings: "opsz" 14, "SOFT" 30, "wght" 500;
     font-size: 1.05rem;
     color: var(--ink);
+}
+
+/* Checkbox labels (used in create event form) */
+.checkbox-label {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+/* Ballot submit row */
+.ballot-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+}
+
+.ballot-row .muted {
+    font-style: italic;
 }
 
 .results-bar {
@@ -695,6 +734,10 @@ button:disabled, .btn:disabled {
     background: var(--accent);
     height: 100%;
     transition: width 360ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.results-bar-fill.winner {
+    background: var(--accent-strong);
 }
 
 .results-bar .option-name {

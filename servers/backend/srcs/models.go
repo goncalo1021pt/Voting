@@ -12,15 +12,18 @@ type User struct {
 
 // Event represents a voting event (created by a host user)
 type Event struct {
-	ID          int       `json:"id"`
-	HostID      int       `json:"host_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Visibility  string    `json:"visibility"` // "public" or "invite-only"
-	ResultsVisibility string `json:"results_visibility"` // "after_conclusion" or "live"
-	IsActive    bool      `json:"is_active"`
-	CreatedAt   time.Time `json:"created_at"`
-	Categories  []Category `json:"categories,omitempty"`
+	ID                int            `json:"id"`
+	HostID            int            `json:"host_id"`
+	Name              string         `json:"name"`
+	Description       string         `json:"description"`
+	Visibility        string         `json:"visibility"`        // "public" or "invite-only"
+	ResultsVisibility string         `json:"results_visibility"` // "after_conclusion" or "live"
+	IsActive          bool           `json:"is_active"`
+	CreatedAt         time.Time      `json:"created_at"`
+	Categories        []Category     `json:"categories,omitempty"`
+	IsMember         bool        `json:"is_member,omitempty"`
+	MyVotes          map[int]int `json:"my_votes,omitempty"`
+	RequireFullBallot bool       `json:"require_full_ballot"`
 }
 
 // EventMember represents a user's membership in an event
@@ -105,6 +108,7 @@ type CreateEventRequest struct {
 	Description       string                  `json:"description"`
 	Visibility        string                  `json:"visibility"`
 	ResultsVisibility string                  `json:"results_visibility"`
+	RequireFullBallot bool                    `json:"require_full_ballot"`
 	Categories        []CreateCategoryRequest `json:"categories"`
 }
 

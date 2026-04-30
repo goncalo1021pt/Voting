@@ -24,6 +24,7 @@ CREATE TABLE events (
     visibility VARCHAR(50) DEFAULT 'invite-only' CHECK (visibility IN ('public', 'invite-only')),
     results_visibility VARCHAR(50) DEFAULT 'after_conclusion' CHECK (results_visibility IN ('after_conclusion', 'live')),
     is_active BOOLEAN DEFAULT TRUE,
+    require_full_ballot BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

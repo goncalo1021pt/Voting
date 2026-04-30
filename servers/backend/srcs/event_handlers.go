@@ -66,7 +66,7 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create event
-	event, err := CreateEventInDB(userID, req.Name, req.Description, req.Visibility, req.ResultsVisibility, req.Categories)
+	event, err := CreateEventInDB(userID, req.Name, req.Description, req.Visibility, req.ResultsVisibility, req.RequireFullBallot, req.Categories)
 	if err != nil {
 		http.Error(w, "Failed to create event", http.StatusInternalServerError)
 		return
@@ -92,6 +92,16 @@ func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Event not found", http.StatusNotFound)
 		return
+	}
+
+	// Enrich with caller-specific membership and vote data.
+	if userID, err := GetUserFromToken(r); err == nil && userID > 0 {
+		if isMember, err := IsEventMemberFromDB(eventID, userID); err == nil {
+			event.IsMember = isMember
+		}
+		if votes, err := GetUserVotesForEventFromDB(eventID, userID); err == nil {
+			event.MyVotes = votes
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

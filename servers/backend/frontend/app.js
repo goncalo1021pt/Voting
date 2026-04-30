@@ -266,7 +266,7 @@ const routes = [
     { pattern: /^#?\/?$/, view: viewHome },
     { pattern: /^#?\/login$/, view: viewLogin },
     { pattern: /^#?\/register$/, view: viewRegister },
-    { pattern: /^#?\/events$/, view: viewEvents },
+    { pattern: /^#?\/events$/, view: viewEvents, requireAuth: true },
     { pattern: /^#?\/events\/new$/, view: viewCreateEvent, requireAuth: true },
     { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"] },
     { pattern: /^#?\/events\/(\d+)$/, view: viewEvent, params: ["eventId"] },
@@ -407,28 +407,7 @@ async function viewRegister() {
     );
 }
 
-// ---------- Events list logic ----------
-
-// The /events endpoint (when authed) returns: public events + your own events
-// (host or member). We need to know which events the user is currently a
-// member of so we can split into "Available to join" vs "Your events".
-async function fetchUserMembership(events) {
-    if (!auth.token) return new Set();
-    const me = auth.user?.id;
-    const ids = new Set();
-    // For events that are host-only-mine, host_id === me means member implicitly.
-    // For others, GET /events/:id returns members? It doesn't currently. We use a
-    // heuristic: if visibility is invite-only AND it's in the list, you're either
-    // host or member (the API only includes invite-only events you're part of).
-    // For public events, we don't know membership without joining or asking the
-    // detail endpoint. Treat public + not host as "available to join", member or
-    // not — joining is idempotent so this is safe.
-    for (const e of events) {
-        if (e.host_id === me) ids.add(e.id);
-        else if (e.visibility === "invite-only") ids.add(e.id);
-    }
-    return ids;
-}
+// ---------- Events list ----------
 
 async function viewEvents() {
     document.querySelector("main").classList.remove("narrow");
@@ -441,42 +420,36 @@ async function viewEvents() {
     }
     events = events || [];
 
-    const memberOf = await fetchUserMembership(events);
-
-    const yours = events.filter((e) => memberOf.has(e.id));
-    const joinable = events.filter((e) =>
-        !memberOf.has(e.id) && e.visibility === "public" && e.is_active);
+    // is_member is now returned by the API for authenticated users.
+    const yours = events.filter((e) => e.is_member);
+    const joinable = events.filter((e) => !e.is_member && e.visibility === "public" && e.is_active);
 
     const header = el("div", { class: "card-row" }, [
         el("div", {}, [
             el("p", { class: "eyebrow" }, "Programme"),
             el("h1", {}, "Events"),
-            el("p", { class: "subtitle" },
-                auth.token
-                    ? "Find an open ceremony to attend, or revisit the ones you’re part of."
-                    : "Browse the public programme. Log in to join, host, and vote."),
+            el("p", { class: "subtitle" }, "Find an open ceremony to attend, or revisit the ones you’re part of."),
         ]),
-        auth.token && el("a", { class: "btn", href: "#/events/new" }, "Host an event"),
+        el("a", { class: "btn", href: "#/events/new" }, "Host an event"),
     ]);
 
-    const sectionAvailable = joinable.length
-        ? section("Available to join", joinable.map((e) => eventCard(e, { joinable: true })))
-        : auth.token && section("Available to join", [emptyNote("No open public events right now.")]);
+    const sectionJoinable = section("Available to join", joinable.length
+        ? joinable.map((e) => eventCard(e, {
+            onJoin: async () => {
+                try {
+                    await API.joinEvent(e.id);
+                    toast("Joined event", "success");
+                    router();
+                } catch (err) { toast(err.message || "Failed to join", "error"); }
+            },
+        }))
+        : [emptyNote("No open public events right now.")]);
 
-    const sectionYours = auth.token
-        ? (yours.length
-            ? section("Your events", yours.map((e) => eventCard(e, { mine: true })))
-            : section("Your events", [emptyNote("You haven’t hosted or joined anything yet.")]))
-        : null;
+    const sectionYours = section("Your events", yours.length
+        ? yours.map((e) => eventCard(e, { mine: true }))
+        : [emptyNote("You haven’t hosted or joined anything yet.")]);
 
-    const sectionAll = !auth.token
-        ? section("Public programme",
-            events.length
-                ? events.map((e) => eventCard(e, {}))
-                : [emptyNote("No events yet.")])
-        : null;
-
-    render(header, sectionAvailable, sectionYours, sectionAll);
+    render(header, sectionJoinable, sectionYours);
 }
 
 function section(title, children) {
@@ -491,19 +464,28 @@ function emptyNote(text) {
     return el("div", { class: "empty" }, text);
 }
 
-function eventCard(e, opts) {
+function eventCard(e, opts = {}) {
     const tags = [
         el("span", { class: "tag " + (e.visibility === "public" ? "subtle" : "accent") }, e.visibility),
         el("span", { class: "tag subtle" }, e.results_visibility === "live" ? "live results" : "results after close"),
         el("span", { class: e.is_active ? "tag success" : "tag danger" }, e.is_active ? "open" : "closed"),
-        opts && opts.mine && auth.user && e.host_id === auth.user.id ? el("span", { class: "tag accent" }, "you host") : null,
+        opts.mine && auth.user && e.host_id === auth.user.id ? el("span", { class: "tag accent" }, "you host") : null,
     ];
-    return el("a", { class: "card", href: `#/events/${e.id}` }, [
-        el("p", { class: "eyebrow" }, opts && opts.joinable ? "Open to join" : ""),
+
+    const body = [
         el("h3", {}, e.name),
         e.description ? el("p", { class: "muted" }, e.description) : null,
         el("div", { class: "card-meta" }, tags),
-    ]);
+        opts.onJoin ? el("div", { class: "button-row", style: "margin-top:14px;" }, [
+            el("button", { class: "secondary", onClick: opts.onJoin }, "Join event"),
+        ]) : null,
+    ];
+
+    // Cards with a join action are not navigable — clicking the card does nothing.
+    if (opts.onJoin) {
+        return el("div", { class: "card" }, body);
+    }
+    return el("a", { class: "card", href: `#/events/${e.id}` }, body);
 }
 
 // ---------- Create event ----------
@@ -557,6 +539,7 @@ async function viewCreateEvent() {
             const description = form.elements["description"].value.trim();
             const visibility = form.elements["visibility"].value;
             const resultsVisibility = form.elements["results_visibility"].value;
+            const requireFullBallot = form.elements["require_full_ballot"].checked;
             const categories = [];
             for (const block of categoriesContainer.querySelectorAll(".category-block")) {
                 const catName = block.querySelector("input[name^='cat-']").value.trim();
@@ -576,6 +559,7 @@ async function viewCreateEvent() {
                 const created = await API.createEvent({
                     name, description, visibility,
                     results_visibility: resultsVisibility,
+                    require_full_ballot: requireFullBallot,
                     categories,
                 });
                 toast("Event created", "success");
@@ -600,6 +584,10 @@ async function viewCreateEvent() {
                 el("option", { value: "after_conclusion" }, "After event closes (default)"),
                 el("option", { value: "live" }, "Live"),
             ]),
+        ]),
+        el("label", { class: "checkbox-label" }, [
+            el("input", { type: "checkbox", name: "require_full_ballot" }),
+            "Require voters to fill all categories before submitting",
         ]),
         el("h2", {}, "Categories"),
         categoriesContainer,
@@ -634,12 +622,18 @@ async function viewEvent({ eventId }) {
     }
 
     const isHost = auth.user && event.host_id === auth.user.id;
+    const myVotes = event.my_votes || {};
+    const categories = event.categories || [];
+    const canVote = !!(auth.token && event.is_active && event.is_member);
+    const unvotedCategories = categories.filter((c) => myVotes[c.id] == null);
+    const showResultsLink = !event.is_active || event.results_visibility === "live" || isHost;
 
     const tags = [
         el("span", { class: "tag " + (event.visibility === "public" ? "subtle" : "accent") }, event.visibility),
         el("span", { class: "tag subtle" }, event.results_visibility === "live" ? "live results" : "results after close"),
         el("span", { class: event.is_active ? "tag success" : "tag danger" }, event.is_active ? "open" : "closed"),
         isHost ? el("span", { class: "tag accent" }, "you host") : null,
+        event.require_full_ballot ? el("span", { class: "tag subtle" }, "full ballot required") : null,
     ];
 
     const headerCard = el("section", {}, [
@@ -648,18 +642,14 @@ async function viewEvent({ eventId }) {
         event.description ? el("p", { class: "subtitle" }, event.description) : null,
         el("div", { class: "card-meta" }, tags),
         el("div", { class: "button-row", style: "margin-top:18px;" }, [
-            auth.token && event.visibility === "public" && event.is_active
+            auth.token && event.visibility === "public" && event.is_active && !event.is_member
                 ? el("button", {
                     class: "secondary",
                     onClick: async () => {
-                        try {
-                            await API.joinEvent(event.id);
-                            toast("Joined event", "success");
-                            router();
-                        } catch (err) { toast(err.message || "Failed to join", "error"); }
+                        try { await API.joinEvent(event.id); toast("Joined event", "success"); router(); }
+                        catch (err) { toast(err.message || "Failed to join", "error"); }
                     },
-                }, "Join event")
-                : null,
+                }, "Join event") : null,
             isHost && event.is_active ? el("button", {
                 class: "secondary",
                 onClick: async () => {
@@ -675,58 +665,103 @@ async function viewEvent({ eventId }) {
                 class: "danger",
                 onClick: async () => {
                     if (!confirm("Close this event? Voting will stop and results become public to members.")) return;
-                    try {
-                        await API.closeEvent(event.id);
-                        toast("Event closed", "success");
-                        router();
-                    } catch (err) { toast(err.message || "Failed to close", "error"); }
+                    try { await API.closeEvent(event.id); toast("Event closed", "success"); router(); }
+                    catch (err) { toast(err.message || "Failed to close", "error"); }
                 },
             }, "Close event") : null,
         ]),
     ]);
 
-    const sections = (event.categories || []).map((cat) => renderCategorySection(event, cat, isHost));
-    const categoriesView = sections.length
-        ? el("section", {}, [el("h2", {}, "Categories"), ...sections])
-        : el("p", { class: "muted" }, "No categories.");
+    if (categories.length === 0) {
+        render(headerCard, el("p", { class: "muted" }, "No categories."));
+        return;
+    }
 
-    render(headerCard, categoriesView);
-}
+    // Ballot draft state — shared across all category blocks.
+    const drafts = {};
+    let submitBtn = null;
 
-function renderCategorySection(event, category, isHost) {
-    const optionsList = el("div", { class: "vote-options" });
-    (category.options || []).forEach((opt) => {
-        const row = el("div", { class: "vote-option" }, [
-            el("span", { class: "option-name" }, opt.name),
-            auth.token && event.is_active ? el("button", {
-                class: "secondary",
-                onClick: async () => {
-                    try {
-                        await API.vote(category.id, opt.id);
-                        toast(`Voted: ${opt.name}`, "success");
-                        Array.from(optionsList.children).forEach((c) => c.classList.remove("selected"));
-                        row.classList.add("selected");
-                    } catch (err) {
-                        toast(err.message || "Failed to vote", "error");
+    function updateSubmitState() {
+        if (!submitBtn) return;
+        const hasAny = Object.keys(drafts).length > 0;
+        const allFilled = unvotedCategories.every((c) => drafts[c.id] != null);
+        submitBtn.disabled = !hasAny || (event.require_full_ballot && !allFilled);
+    }
+
+    const categoryBlocks = categories.map((cat) => {
+        const votedOptionId = myVotes[cat.id];
+        const isVoted = votedOptionId != null;
+
+        const optionsList = el("div", { class: "vote-options" });
+        (cat.options || []).forEach((opt) => {
+            const isMyVote = isVoted && String(votedOptionId) === String(opt.id);
+            const row = el("div", {
+                class: "vote-option" + (isMyVote ? " selected" : "") + (!isVoted && canVote ? " selectable" : ""),
+            }, [
+                el("span", { class: "option-name" }, opt.name),
+                isVoted && isMyVote ? el("span", { class: "tag success" }, "Your vote") : null,
+            ]);
+
+            if (!isVoted && canVote) {
+                row.addEventListener("click", () => {
+                    if (drafts[cat.id] === opt.id) {
+                        delete drafts[cat.id];
+                    } else {
+                        drafts[cat.id] = opt.id;
                     }
-                },
-            }, "Vote") : null,
+                    Array.from(optionsList.children).forEach((r) => r.classList.remove("selected"));
+                    if (drafts[cat.id] != null) row.classList.add("selected");
+                    updateSubmitState();
+                });
+            }
+
+            optionsList.appendChild(row);
+        });
+
+        return el("article", { class: "card" }, [
+            el("h3", {}, cat.name),
+            optionsList,
+            showResultsLink
+                ? el("div", { class: "button-row", style: "margin-top:12px;" }, [
+                    el("a", { class: "btn secondary", href: `#/events/${event.id}/results/${cat.id}` }, "View results"),
+                ])
+                : el("p", { class: "muted", style: "margin-top:8px;" }, "Results after event closes."),
         ]);
-        optionsList.appendChild(row);
     });
 
-    const showResultsLink = !event.is_active || event.results_visibility === "live" || isHost;
-    const resultsBlock = showResultsLink
-        ? el("div", { class: "button-row" }, [
-            el("a", { class: "btn secondary", href: `#/events/${event.id}/results/${category.id}` }, "View results"),
-        ])
-        : el("p", { class: "muted" }, "Results will appear after the host closes the event.");
+    // Ballot submit row — only shown if the user can still vote in some categories.
+    let ballotRow = null;
+    if (canVote && unvotedCategories.length > 0) {
+        submitBtn = el("button", { type: "button", disabled: true }, "Submit votes");
+        updateSubmitState();
 
-    return el("article", { class: "card" }, [
-        el("h3", {}, category.name),
-        optionsList,
-        resultsBlock,
-    ]);
+        submitBtn.addEventListener("click", async () => {
+            submitBtn.disabled = true;
+            submitBtn.textContent = "Submitting…";
+            let errors = 0;
+            for (const [catId, optId] of Object.entries(drafts)) {
+                try {
+                    await API.vote(Number(catId), Number(optId));
+                } catch (err) {
+                    if (err.status !== 409) errors++;
+                }
+            }
+            if (errors > 0) toast(`${errors} vote(s) failed`, "error");
+            else toast("Votes submitted", "success");
+            router();
+        });
+
+        const hint = el("p", { class: "muted" }, event.require_full_ballot
+            ? "All categories must be filled to submit."
+            : "You can submit a partial ballot.");
+
+        ballotRow = el("div", { class: "ballot-row" }, [submitBtn, hint]);
+    }
+
+    render(
+        headerCard,
+        el("section", {}, [el("h2", {}, "Categories"), ...categoryBlocks, ballotRow]),
+    );
 }
 
 // ---------- Results ----------
@@ -742,15 +777,19 @@ async function viewResults({ eventId, categoryId }) {
     }
     const total = results.total_votes || 0;
     const sorted = (results.results || []).slice().sort((a, b) => b.votes - a.votes);
-    const bars = sorted.map((r) => {
+    const bars = sorted.map((r, i) => {
         const pct = total > 0 ? Math.round((r.votes / total) * 100) : 0;
+        const isWinner = i === 0 && total > 0;
         return el("div", { class: "results-bar" }, [
             el("div", { class: "card-row" }, [
-                el("span", { class: "option-name" }, r.option_name),
+                el("div", { style: "display:flex;align-items:center;gap:8px;" }, [
+                    isWinner ? el("span", { class: "tag accent" }, "Winner") : null,
+                    el("span", { class: "option-name" }, r.option_name),
+                ]),
                 el("span", { class: "muted" }, `${r.votes} vote${r.votes === 1 ? "" : "s"} (${pct}%)`),
             ]),
             el("div", { class: "results-bar-track" }, [
-                el("div", { class: "results-bar-fill", style: `width:${pct}%` }),
+                el("div", { class: "results-bar-fill" + (isWinner ? " winner" : ""), style: `width:${pct}%` }),
             ]),
         ]);
     });
@@ -802,13 +841,7 @@ async function viewProfile() {
 
     const myID = user?.id;
     const hosting = events.filter((e) => e.host_id === myID);
-    // "Joined" = events you're a member of, but not the host. The /events list
-    // already excludes invite-only events you're not part of, so any non-host
-    // invite-only event in the list is one you've joined. For public events we
-    // can't tell membership from the list alone — surface them under "Available
-    // to join" on the Events tab instead, so we don't claim membership we can't
-    // confirm.
-    const joined = events.filter((e) => e.host_id !== myID && e.visibility === "invite-only");
+    const joined = events.filter((e) => e.is_member && e.host_id !== myID);
 
     const profileHero = el("section", { class: "profile-hero" }, [
         el("div", { class: "avatar" }, initials),
