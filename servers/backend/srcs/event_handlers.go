@@ -338,6 +338,41 @@ func JoinEventHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"message":"Successfully joined event"}`, eventID))
 }
 
+// DeleteEventHandler permanently removes an event. Only the host may delete.
+func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 3 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := DeleteEventInDB(eventID, userID); err != nil {
+		switch {
+		case errors.Is(err, ErrEventNotFound):
+			http.Error(w, "Event not found", http.StatusNotFound)
+		case errors.Is(err, ErrNotHost):
+			http.Error(w, "Only the host can delete this event", http.StatusForbidden)
+		default:
+			http.Error(w, "Failed to delete event", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"message":"Event deleted"}`, eventID))
+}
+
 // CloseEventHandler lets the host of an event mark it inactive.
 func CloseEventHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := GetUserFromToken(r)

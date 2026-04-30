@@ -37,6 +37,8 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		LoginHandler(w, r)
 	case path == "/auth/logout" && r.Method == "POST":
 		LogoutHandler(w, r)
+	case path == "/auth/me" && r.Method == "GET":
+		RequireAuth(MeHandler)(w, r)
 	
 	// Event routes (check most specific first)
 	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
@@ -47,6 +49,8 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(JoinEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/close") && r.Method == "POST":
 		RequireAuth(CloseEventHandler)(w, r)
+	case strings.HasPrefix(path, "/events/") && r.Method == "DELETE":
+		RequireAuth(DeleteEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":
 		GetEventHandler(w, r)
 	case path == "/events" && r.Method == "GET":

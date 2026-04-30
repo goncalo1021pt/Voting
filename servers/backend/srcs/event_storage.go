@@ -328,12 +328,41 @@ func GetEventResultsFromDB(eventID, categoryID int) (*ResultsResponse, error) {
 		results = append(results, result)
 	}
 
+	var memberCount int
+	db.QueryRow(
+		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
+	).Scan(&memberCount)
+
 	return &ResultsResponse{
 		CategoryID:   categoryID,
 		CategoryName: categoryName,
 		Results:      results,
 		TotalVotes:   totalVotes,
+		MemberCount:  memberCount,
 	}, nil
+}
+
+// DeleteEventInDB removes an event and all its data. Only the host may delete.
+func DeleteEventInDB(eventID, userID int) error {
+	res, err := db.Exec(
+		"DELETE FROM events WHERE id = $1 AND host_id = $2",
+		eventID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete event: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read rows affected: %w", err)
+	}
+	if rows == 0 {
+		var hostID int
+		if qerr := db.QueryRow("SELECT host_id FROM events WHERE id = $1", eventID).Scan(&hostID); qerr == sql.ErrNoRows {
+			return ErrEventNotFound
+		}
+		return ErrNotHost
+	}
+	return nil
 }
 
 // RecordVoteInDB records a vote from a user
