@@ -79,10 +79,11 @@ type Result struct {
 
 // ResultsResponse represents voting results for a category
 type ResultsResponse struct {
-	CategoryID   int        `json:"category_id"`
-	CategoryName string     `json:"category_name"`
-	Results      []Result   `json:"results"`
-	TotalVotes   int        `json:"total_votes"`
+	CategoryID   int      `json:"category_id"`
+	CategoryName string   `json:"category_name"`
+	Results      []Result `json:"results"`
+	TotalVotes   int      `json:"total_votes"`
+	MemberCount  int      `json:"member_count"`
 }
 
 // Auth request/response types

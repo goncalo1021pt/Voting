@@ -817,6 +817,70 @@ button:disabled, .btn:disabled {
 }
 
 /* ==========================================================================
+   Modal dialog
+   ========================================================================== */
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: color-mix(in oklab, var(--ink) 55%, transparent);
+    backdrop-filter: blur(5px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    animation: modalBackdropIn 200ms ease;
+}
+
+@keyframes modalBackdropIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.modal {
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    padding: 32px;
+    max-width: 440px;
+    width: 100%;
+    box-shadow: var(--shadow-card);
+    animation: modalIn 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes modalIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    font-size: 0.72rem;
+    color: var(--ink-faded);
+    font-weight: 600;
+    margin: 0 0 8px;
+}
+
+.modal-title {
+    font-family: "Fraunces", serif;
+    font-variation-settings: "opsz" 36, "SOFT" 30, "wght" 500;
+    font-size: 1.7rem;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    color: var(--ink);
+    margin: 0 0 12px;
+}
+
+.modal-body {
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    line-height: 1.65;
+    margin: 0 0 24px;
+}
+
+/* ==========================================================================
    Errors
    ========================================================================== */
 

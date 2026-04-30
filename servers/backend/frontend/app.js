@@ -65,12 +65,17 @@ async function api(method, path, body) {
         const msg = typeof data === "string" ? data : (data && data.error) || res.statusText;
         const err = new Error((msg || `HTTP ${res.status}`).trim());
         err.status = res.status;
+        if (res.status === 401) {
+            auth.clear();
+            renderTopbar();
+        }
         throw err;
     }
     return data;
 }
 
 const API = {
+    me: () => api("GET", "/auth/me"),
     register: (body) => api("POST", "/auth/register", body),
     login: (body) => api("POST", "/auth/login", body),
     logout: () => api("POST", "/auth/logout"),
@@ -85,7 +90,50 @@ const API = {
         api("POST", "/votes", { category_id: categoryId, option_id: optionId }),
     getResults: (eventId, categoryId) =>
         api("GET", `/events/${eventId}/results/${categoryId}`),
+    deleteEvent: (id) => api("DELETE", `/events/${id}`),
 };
+
+// ---------- Modal dialog ----------
+
+// Returns a Promise<boolean> — resolves true if confirmed, false if cancelled.
+function dialog({ eyebrow = "Confirm", title, body, confirm: confirmLabel = "Confirm", danger = false } = {}) {
+    return new Promise((resolve) => {
+        const backdrop = el("div", { class: "modal-backdrop" });
+
+        function close(result) {
+            backdrop.remove();
+            resolve(result);
+        }
+
+        // Close on backdrop click (outside the modal card).
+        backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(false); });
+
+        // Close on Escape key.
+        function onKey(e) { if (e.key === "Escape") { document.removeEventListener("keydown", onKey); close(false); } }
+        document.addEventListener("keydown", onKey);
+
+        const confirmBtn = el("button", {
+            class: danger ? "danger" : "",
+            onClick: () => { document.removeEventListener("keydown", onKey); close(true); },
+        }, confirmLabel);
+
+        const cancelBtn = el("button", {
+            class: "secondary",
+            onClick: () => { document.removeEventListener("keydown", onKey); close(false); },
+        }, "Cancel");
+
+        backdrop.appendChild(el("div", { class: "modal" }, [
+            el("p", { class: "modal-eyebrow" }, eyebrow),
+            el("h2", { class: "modal-title" }, title),
+            body ? el("p", { class: "modal-body" }, body) : null,
+            el("div", { class: "button-row" }, [confirmBtn, cancelBtn]),
+        ]));
+
+        document.body.appendChild(backdrop);
+        // Focus the confirm button so Enter works immediately.
+        confirmBtn.focus();
+    });
+}
 
 // ---------- DOM helpers ----------
 
@@ -294,6 +342,11 @@ async function router() {
         try {
             await r.view(params);
         } catch (err) {
+            if (err.status === 401) {
+                toast("Your session has expired. Please log in again.", "error");
+                navigate("#/login");
+                return;
+            }
             console.error(err);
             render(el("div", { class: "error-box" }, err.message || String(err)));
         }
@@ -357,8 +410,8 @@ async function viewLogin() {
             }
         },
     }, [
-        el("label", {}, ["Username", el("input", { name: "username", autocomplete: "username", required: true })]),
-        el("label", {}, ["Password", el("input", { type: "password", name: "password", autocomplete: "current-password", required: true })]),
+        el("label", { for: "login-username" }, ["Username", el("input", { id: "login-username", type: "text", name: "username", autocomplete: "username", required: true })]),
+        el("label", { for: "login-password" }, ["Password", el("input", { id: "login-password", type: "password", name: "password", autocomplete: "current-password", required: true })]),
         el("div", { class: "button-row" }, [
             el("button", { type: "submit" }, "Log in"),
             el("a", { class: "btn secondary", href: "#/register" }, "Register instead"),
@@ -392,9 +445,9 @@ async function viewRegister() {
             }
         },
     }, [
-        el("label", {}, ["Username", el("input", { name: "username", autocomplete: "username", required: true })]),
-        el("label", {}, ["Email", el("input", { type: "email", name: "email", autocomplete: "email", required: true })]),
-        el("label", {}, ["Password (min 6 chars)", el("input", { type: "password", name: "password", autocomplete: "new-password", required: true })]),
+        el("label", { for: "reg-username" }, ["Username", el("input", { id: "reg-username", type: "text", name: "username", autocomplete: "off", required: true })]),
+        el("label", { for: "reg-email" }, ["Email", el("input", { id: "reg-email", type: "email", name: "email", autocomplete: "email", required: true })]),
+        el("label", { for: "reg-password" }, ["Password (min 6 chars)", el("input", { id: "reg-password", type: "password", name: "password", autocomplete: "off", required: true })]),
         el("div", { class: "button-row" }, [
             el("button", { type: "submit" }, "Create account"),
             el("a", { class: "btn secondary", href: "#/login" }, "Log in instead"),
@@ -415,7 +468,6 @@ async function viewEvents() {
     try {
         events = await API.listEvents();
     } catch (err) {
-        if (err.status === 401) { auth.clear(); renderTopbar(); navigate("#/login"); return; }
         throw err;
     }
     events = events || [];
@@ -617,7 +669,6 @@ async function viewEvent({ eventId }) {
     try {
         event = await API.getEvent(eventId);
     } catch (err) {
-        if (err.status === 401) { auth.clear(); renderTopbar(); navigate("#/login"); return; }
         throw err;
     }
 
@@ -664,16 +715,53 @@ async function viewEvent({ eventId }) {
             isHost && event.is_active ? el("button", {
                 class: "danger",
                 onClick: async () => {
-                    if (!confirm("Close this event? Voting will stop and results become public to members.")) return;
+                    const ok = await dialog({
+                        eyebrow: "Host action",
+                        title: "Close this event?",
+                        body: "Voting will stop and results will become visible to all members.",
+                        confirm: "Close event",
+                        danger: true,
+                    });
+                    if (!ok) return;
                     try { await API.closeEvent(event.id); toast("Event closed", "success"); router(); }
                     catch (err) { toast(err.message || "Failed to close", "error"); }
                 },
             }, "Close event") : null,
+            isHost ? el("button", {
+                class: "danger",
+                onClick: async () => {
+                    const ok = await dialog({
+                        eyebrow: "Danger zone",
+                        title: "Delete this event?",
+                        body: "All categories, options, and votes will be permanently removed. This cannot be undone.",
+                        confirm: "Delete event",
+                        danger: true,
+                    });
+                    if (!ok) return;
+                    try { await API.deleteEvent(event.id); toast("Event deleted", "success"); navigate("#/events"); }
+                    catch (err) { toast(err.message || "Failed to delete", "error"); }
+                },
+            }, "Delete event") : null,
         ]),
     ]);
 
     if (categories.length === 0) {
         render(headerCard, el("p", { class: "muted" }, "No categories."));
+        return;
+    }
+
+    // Non-member trying to view an invite-only event — show a wall instead of categories.
+    if (!event.is_member && event.visibility === "invite-only") {
+        render(
+            headerCard,
+            el("div", { class: "card" }, [
+                el("p", { class: "eyebrow" }, "Access restricted"),
+                el("p", {}, "This event is invite-only. You need an invitation link from the host to join."),
+                el("div", { class: "button-row", style: "margin-top:14px;" }, [
+                    el("a", { class: "btn secondary", href: "#/events" }, "← All events"),
+                ]),
+            ]),
+        );
         return;
     }
 
@@ -772,7 +860,6 @@ async function viewResults({ eventId, categoryId }) {
     try {
         results = await API.getResults(eventId, categoryId);
     } catch (err) {
-        if (err.status === 401) { auth.clear(); renderTopbar(); navigate("#/login"); return; }
         throw err;
     }
     const total = results.total_votes || 0;
@@ -793,13 +880,19 @@ async function viewResults({ eventId, categoryId }) {
             ]),
         ]);
     });
+    const memberCount = results.member_count || 0;
+    const participation = memberCount > 0
+        ? `${total} of ${memberCount} member${memberCount === 1 ? "" : "s"} voted`
+        : `${total} total vote${total === 1 ? "" : "s"}`;
+
     render(
         el("p", { class: "eyebrow" }, "Results"),
         el("h1", {}, results.category_name),
-        el("p", { class: "muted" }, `${total} total vote${total === 1 ? "" : "s"}`),
+        el("p", { class: "muted" }, participation),
         el("section", { class: "card" }, bars.length ? bars : [el("p", { class: "muted" }, "No votes yet.")]),
         el("div", { class: "button-row" }, [
             el("a", { class: "btn secondary", href: `#/events/${eventId}` }, "← Back to event"),
+            el("a", { class: "btn secondary", href: "#/events" }, "← All events"),
         ]),
     );
 }
@@ -812,7 +905,6 @@ async function viewRedeemInvitation({ token }) {
         toast("Joined event via invitation", "success");
         navigate(`#/events/${res.event_id}`);
     } catch (err) {
-        if (err.status === 401) { auth.clear(); renderTopbar(); navigate("#/login"); return; }
         render(
             el("p", { class: "eyebrow" }, "Invitation"),
             el("h1", {}, "Hmm."),
@@ -834,8 +926,8 @@ async function viewProfile() {
     let events = [];
     try {
         events = await API.listEvents();
-    } catch (err) {
-        if (err.status === 401) { auth.clear(); renderTopbar(); navigate("#/login"); return; }
+    } catch {
+        // non-critical; profile renders with empty sections
     }
     events = events || [];
 
@@ -883,7 +975,17 @@ async function viewProfile() {
 // ---------- Boot ----------
 
 window.addEventListener("hashchange", router);
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+    // Validate stored token before rendering anything — clears stale sessions.
+    if (auth.token) {
+        try {
+            const user = await API.me();
+            // Sync stored user data in case it changed server-side.
+            auth.set(auth.token, user);
+        } catch {
+            // api() already cleared auth on 401; other errors leave state as-is.
+        }
+    }
     renderTopbar();
     router();
 });
