@@ -3,11 +3,11 @@ all: build
 build:
 	docker compose build
 
-run: build
+up: build
 	docker compose up -d
 	@echo "Containers running. Access backend at http://localhost:8080"
 
-stop:
+down:
 	docker compose down
 
 logs:
@@ -27,8 +27,7 @@ prune:
 	@echo "Volume and networks removed"
 
 re: clean all
-	docker compose up -d
-	@echo "Rebuild complete. Containers running."
+	@echo "Rebuild complete."
 
 help:
 	@echo "Available commands:"
