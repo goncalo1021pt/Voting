@@ -7,7 +7,8 @@
 //   #/events                      Events tab — discover view
 //   #/events/new                  create event (auth)
 //   #/events/:id                  event detail
-//   #/events/:id/results/:catId   results
+//   #/events/:id/results          all-categories results
+//   #/events/:id/results/:catId   single-category results
 //   #/invitations/:token          redeem invite (auth)
 //   #/profile                     profile page (auth)
 
@@ -90,6 +91,7 @@ const API = {
         api("POST", "/votes", { category_id: categoryId, option_id: optionId }),
     getResults: (eventId, categoryId) =>
         api("GET", `/events/${eventId}/results/${categoryId}`),
+    getAllResults: (eventId) => api("GET", `/events/${eventId}/results`),
     deleteEvent: (id) => api("DELETE", `/events/${id}`),
 };
 
@@ -317,6 +319,7 @@ const routes = [
     { pattern: /^#?\/events$/, view: viewEvents, requireAuth: true },
     { pattern: /^#?\/events\/new$/, view: viewCreateEvent, requireAuth: true },
     { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"] },
+    { pattern: /^#?\/events\/(\d+)\/results$/, view: viewAllResults, params: ["eventId"] },
     { pattern: /^#?\/events\/(\d+)$/, view: viewEvent, params: ["eventId"] },
     { pattern: /^#?\/invitations\/([^/]+)$/, view: viewRedeemInvitation, params: ["token"], requireAuth: true },
     { pattern: /^#?\/profile$/, view: viewProfile, requireAuth: true },
@@ -679,10 +682,12 @@ async function viewEvent({ eventId }) {
     const unvotedCategories = categories.filter((c) => myVotes[c.id] == null);
     const showResultsLink = !event.is_active || event.results_visibility === "live" || isHost;
 
+    const memberCount = event.member_count || 0;
     const tags = [
         el("span", { class: "tag " + (event.visibility === "public" ? "subtle" : "accent") }, event.visibility),
         el("span", { class: "tag subtle" }, event.results_visibility === "live" ? "live results" : "results after close"),
         el("span", { class: event.is_active ? "tag success" : "tag danger" }, event.is_active ? "open" : "closed"),
+        el("span", { class: "tag subtle" }, `${memberCount} member${memberCount === 1 ? "" : "s"}`),
         isHost ? el("span", { class: "tag accent" }, "you host") : null,
         event.require_full_ballot ? el("span", { class: "tag subtle" }, "full ballot required") : null,
     ];
@@ -809,11 +814,7 @@ async function viewEvent({ eventId }) {
         return el("article", { class: "card" }, [
             el("h3", {}, cat.name),
             optionsList,
-            showResultsLink
-                ? el("div", { class: "button-row", style: "margin-top:12px;" }, [
-                    el("a", { class: "btn secondary", href: `#/events/${event.id}/results/${cat.id}` }, "View results"),
-                ])
-                : el("p", { class: "muted", style: "margin-top:8px;" }, "Results after event closes."),
+            showResultsLink ? null : el("p", { class: "muted", style: "margin-top:8px;" }, "Results after event closes."),
         ]);
     });
 
@@ -846,25 +847,25 @@ async function viewEvent({ eventId }) {
         ballotRow = el("div", { class: "ballot-row" }, [submitBtn, hint]);
     }
 
+    const resultsLink = showResultsLink
+        ? el("div", { class: "button-row", style: "margin-bottom:14px;" }, [
+            el("a", { class: "btn secondary", href: `#/events/${event.id}/results` }, "View results"),
+        ])
+        : null;
+
     render(
         headerCard,
-        el("section", {}, [el("h2", {}, "Categories"), ...categoryBlocks, ballotRow]),
+        el("section", {}, [el("h2", {}, "Categories"), resultsLink, ...categoryBlocks, ballotRow]),
     );
 }
 
 // ---------- Results ----------
 
-async function viewResults({ eventId, categoryId }) {
-    document.querySelector("main").classList.remove("narrow");
-    let results;
-    try {
-        results = await API.getResults(eventId, categoryId);
-    } catch (err) {
-        throw err;
-    }
-    const total = results.total_votes || 0;
-    const sorted = (results.results || []).slice().sort((a, b) => b.votes - a.votes);
-    const bars = sorted.map((r, i) => {
+// Build the sorted bar list for one category's tally.
+function resultsBars(results) {
+    const total = (results || []).reduce((s, r) => s + (r.votes || 0), 0);
+    const sorted = (results || []).slice().sort((a, b) => b.votes - a.votes);
+    return sorted.map((r, i) => {
         const pct = total > 0 ? Math.round((r.votes / total) * 100) : 0;
         const isWinner = i === 0 && total > 0;
         return el("div", { class: "results-bar" }, [
@@ -880,6 +881,13 @@ async function viewResults({ eventId, categoryId }) {
             ]),
         ]);
     });
+}
+
+async function viewResults({ eventId, categoryId }) {
+    document.querySelector("main").classList.remove("narrow");
+    const results = await API.getResults(eventId, categoryId);
+    const bars = resultsBars(results.results);
+    const total = results.total_votes || 0;
     const memberCount = results.member_count || 0;
     const participation = memberCount > 0
         ? `${total} of ${memberCount} member${memberCount === 1 ? "" : "s"} voted`
@@ -890,6 +898,40 @@ async function viewResults({ eventId, categoryId }) {
         el("h1", {}, results.category_name),
         el("p", { class: "muted" }, participation),
         el("section", { class: "card" }, bars.length ? bars : [el("p", { class: "muted" }, "No votes yet.")]),
+        el("div", { class: "button-row" }, [
+            el("a", { class: "btn secondary", href: `#/events/${eventId}/results` }, "All categories"),
+            el("a", { class: "btn secondary", href: `#/events/${eventId}` }, "← Back to event"),
+        ]),
+    );
+}
+
+async function viewAllResults({ eventId }) {
+    document.querySelector("main").classList.remove("narrow");
+    const data = await API.getAllResults(eventId);
+    const memberCount = data.member_count || 0;
+    const cats = data.categories || [];
+
+    const cards = cats.map((cat) => {
+        const bars = resultsBars(cat.results);
+        const total = cat.total_votes || 0;
+        return el("section", { class: "card" }, [
+            el("div", { class: "card-row" }, [
+                el("h3", {}, cat.category_name),
+                el("span", { class: "muted" }, `${total} vote${total === 1 ? "" : "s"}`),
+            ]),
+            bars.length ? el("div", {}, bars) : el("p", { class: "muted" }, "No votes yet."),
+        ]);
+    });
+
+    const summary = memberCount > 0
+        ? `${memberCount} member${memberCount === 1 ? "" : "s"} • ${data.is_active ? "voting open" : "closed"}`
+        : (data.is_active ? "voting open" : "closed");
+
+    render(
+        el("p", { class: "eyebrow" }, "Results"),
+        el("h1", {}, data.event_name),
+        el("p", { class: "muted" }, summary),
+        cards.length ? el("section", {}, cards) : el("p", { class: "muted" }, "No categories."),
         el("div", { class: "button-row" }, [
             el("a", { class: "btn secondary", href: `#/events/${eventId}` }, "← Back to event"),
             el("a", { class: "btn secondary", href: "#/events" }, "← All events"),

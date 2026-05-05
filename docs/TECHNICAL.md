@@ -6,7 +6,7 @@
 - **Database** — PostgreSQL 15.
 - **Frontend** — Vanilla JS SPA (hash-routed, no framework or bundler). Three static files served by the Go backend: `index.html`, `styles.css`, `app.js`.
 - **Containerisation** — Docker + Docker Compose. Two services: `voting-db` (Postgres) and `voting-backend` (Go).
-- **Build / dev workflow** — Makefile at the repo root (`docker compose` targets) and inside `servers/backend/` (local Go build targets).
+- **Build / dev workflow** — Makefile at the repo root (`docker compose` targets) and inside `backend/` (local Go build targets).
 
 ## Repository layout
 
@@ -18,35 +18,34 @@ Voting/
 ├── docs/
 │   ├── VISION.md               # Product vision & objective
 │   └── TECHNICAL.md            # This file
-└── servers/
-    ├── postgres/
-    │   ├── Dockerfile
-    │   └── srcs/schema.sql     # Database schema, applied at container init
-    └── backend/
-        ├── Dockerfile
-        ├── Makefile            # Local Go build targets
-        ├── go.mod / go.sum
-        ├── frontend/
-        │   ├── index.html      # Shell — topbar, view mount point, theme bootstrap
-        │   ├── styles.css      # Editorial / awards-show design system
-        │   └── app.js          # Full SPA: router, views, API client, DOM helpers
-        └── srcs/
-            ├── main.go             # Entry point, server bootstrap
-            ├── routes.go           # HTTP routing + CORS middleware
-            ├── auth.go             # Register / login / logout / me / RequireAuth
-            ├── auth_storage.go     # User & session DB access
-            ├── event_handlers.go   # Event / category / option / vote / results handlers
-            ├── event_storage.go    # Event-related DB access
-            ├── db.go               # DB connection lifecycle
-            ├── models.go           # Shared structs
-            └── errors.go           # Sentinel errors
+├── postgres/
+│   ├── Dockerfile
+│   └── srcs/schema.sql         # Database schema, applied at container init
+├── frontend/
+│   ├── index.html              # Shell — topbar, view mount point, theme bootstrap
+│   ├── styles.css              # Editorial / awards-show design system
+│   └── app.js                  # Full SPA: router, views, API client, DOM helpers
+└── backend/
+    ├── Dockerfile
+    ├── Makefile                # Local Go build targets
+    ├── go.mod / go.sum
+    └── srcs/
+        ├── main.go             # Entry point, server bootstrap
+        ├── routes.go           # HTTP routing + CORS middleware
+        ├── auth.go             # Register / login / logout / me / RequireAuth
+        ├── auth_storage.go     # User & session DB access
+        ├── event_handlers.go   # Event / category / option / vote / results handlers
+        ├── event_storage.go    # Event-related DB access
+        ├── db.go               # DB connection lifecycle
+        ├── models.go           # Shared structs
+        └── errors.go           # Sentinel errors
 ```
 
 The backend splits **handlers** (HTTP-shaped logic) from **storage** (DB-shaped logic) so the data layer can evolve independently of the API surface.
 
 ## Data model
 
-Defined in `servers/postgres/srcs/schema.sql`. Core tables:
+Defined in `postgres/srcs/schema.sql`. Core tables:
 
 - `users` — registered accounts (username, email, password hash).
 - `sessions` — opaque bearer tokens with a 30-day sliding expiry. Every authenticated request extends the session.
@@ -61,7 +60,7 @@ All foreign keys cascade on delete from the parent (event → categories → opt
 
 ## API surface
 
-Routed in `servers/backend/srcs/routes.go`:
+Routed in `backend/srcs/routes.go`:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -78,7 +77,8 @@ Routed in `servers/backend/srcs/routes.go`:
 | `POST` | `/events/{id}/invitations` | ✓ host | Create invite token |
 | `POST` | `/invitations/{token}` | ✓ | Redeem invite token |
 | `POST` | `/votes` | ✓ | Cast a vote |
-| `GET` | `/events/{id}/results/{catId}` | — | Category results (gated by visibility rules) |
+| `GET` | `/events/{id}/results` | — | All-categories results (gated by visibility rules) |
+| `GET` | `/events/{id}/results/{catId}` | — | Single category results (gated by visibility rules) |
 | `GET` | `/` | — | Static frontend (SPA fallback) |
 
 `RequireAuth` wraps handlers that need a logged-in user. `CORSMiddleware` wraps the whole mux.
@@ -88,7 +88,6 @@ Routed in `servers/backend/srcs/routes.go`:
 Driven by environment variables. Copy `.env.example` to `.env` and fill in values before running:
 
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres connection.
-- `ADMIN_TOKEN` — privileged operations.
 
 ## Running locally
 

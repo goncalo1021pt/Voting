@@ -43,6 +43,8 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	// Event routes (check most specific first)
 	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
 		GetEventResultsHandler(w, r)
+	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/results") && r.Method == "GET":
+		GetAllEventResultsHandler(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/invitations") && r.Method == "POST":
 		RequireAuth(CreateInvitationHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/join") && r.Method == "POST":

@@ -156,6 +156,10 @@ func GetEventFromDB(eventID int) (*Event, error) {
 
 	event.CreatedAt = createdAt
 
+	db.QueryRow(
+		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
+	).Scan(&event.MemberCount)
+
 	// Get categories
 	rows, err := db.Query(
 		"SELECT id, event_id, name FROM categories WHERE event_id = $1",
@@ -340,6 +344,70 @@ func GetEventResultsFromDB(eventID, categoryID int) (*ResultsResponse, error) {
 		TotalVotes:   totalVotes,
 		MemberCount:  memberCount,
 	}, nil
+}
+
+// GetAllEventResultsFromDB returns the full results payload for an event:
+// every category and its tallies, plus event metadata.
+func GetAllEventResultsFromDB(eventID int) (*EventResultsResponse, error) {
+	var resp EventResultsResponse
+	resp.EventID = eventID
+
+	err := db.QueryRow(
+		"SELECT name, is_active FROM events WHERE id = $1", eventID,
+	).Scan(&resp.EventName, &resp.IsActive)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrEventNotFound
+		}
+		return nil, fmt.Errorf("failed to fetch event: %w", err)
+	}
+
+	db.QueryRow(
+		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
+	).Scan(&resp.MemberCount)
+
+	rows, err := db.Query(`
+		SELECT c.id, c.name, COALESCE(o.id, 0), COALESCE(o.name, ''), COUNT(v.id)
+		FROM categories c
+		LEFT JOIN options o ON o.category_id = c.id
+		LEFT JOIN votes v ON v.option_id = o.id
+		WHERE c.event_id = $1
+		GROUP BY c.id, c.name, o.id, o.name
+		ORDER BY c.id, COUNT(v.id) DESC, o.id
+	`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch results: %w", err)
+	}
+	defer rows.Close()
+
+	byCategory := map[int]*CategoryResults{}
+	order := []int{}
+	for rows.Next() {
+		var catID, optID, votes int
+		var catName, optName string
+		if err := rows.Scan(&catID, &catName, &optID, &optName, &votes); err != nil {
+			return nil, fmt.Errorf("failed to scan results row: %w", err)
+		}
+		cat, ok := byCategory[catID]
+		if !ok {
+			cat = &CategoryResults{CategoryID: catID, CategoryName: catName}
+			byCategory[catID] = cat
+			order = append(order, catID)
+		}
+		if optID != 0 {
+			cat.Results = append(cat.Results, Result{OptionID: optID, OptionName: optName, Votes: votes})
+			cat.TotalVotes += votes
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("results rows error: %w", err)
+	}
+
+	resp.Categories = make([]CategoryResults, 0, len(order))
+	for _, id := range order {
+		resp.Categories = append(resp.Categories, *byCategory[id])
+	}
+	return &resp, nil
 }
 
 // DeleteEventInDB removes an event and all its data. Only the host may delete.
