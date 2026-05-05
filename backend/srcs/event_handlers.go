@@ -176,67 +176,67 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"message":"Successfully joined event"}`, eventID))
 }
 
-// GetEventResultsHandler gets voting results for an event
-func GetEventResultsHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract event ID from path like /events/1/results/2
-	path := r.URL.Path
-	parts := strings.Split(path, "/")
+// authorizeResultsView gates results viewing using the same rules for both
+// the per-category and full-event endpoints. Writes the HTTP error and
+// returns false when the caller may not see results.
+func authorizeResultsView(w http.ResponseWriter, r *http.Request, eventID int) bool {
+	hostID, isActive, visibility, resultsVisibility, err := GetEventVisibilityStateFromDB(eventID)
+	if err != nil {
+		if errors.Is(err, ErrEventNotFound) {
+			http.Error(w, "Event not found", http.StatusNotFound)
+			return false
+		}
+		http.Error(w, "Failed to fetch event", http.StatusInternalServerError)
+		return false
+	}
 
-	if len(parts) < 4 {
+	viewerID, _ := GetUserFromToken(r)
+	if viewerID != 0 && viewerID == hostID {
+		return true
+	}
+	if resultsVisibility == "after_conclusion" && isActive {
+		http.Error(w, "Results are hidden until the event is closed", http.StatusForbidden)
+		return false
+	}
+	if visibility != "public" {
+		if viewerID == 0 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return false
+		}
+		isMember, mErr := IsEventMemberFromDB(eventID, viewerID)
+		if mErr != nil {
+			http.Error(w, "Failed to verify membership", http.StatusInternalServerError)
+			return false
+		}
+		if !isMember {
+			http.Error(w, "You are not a member of this event", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
+// GetEventResultsHandler gets voting results for one category in an event.
+func GetEventResultsHandler(w http.ResponseWriter, r *http.Request) {
+	// Path: /events/{id}/results/{catId}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-
 	eventID, err := strconv.Atoi(parts[2])
 	if err != nil {
 		http.Error(w, "Invalid event ID", http.StatusBadRequest)
 		return
 	}
-
 	categoryID, err := strconv.Atoi(parts[4])
 	if err != nil {
 		http.Error(w, "Invalid category ID", http.StatusBadRequest)
 		return
 	}
 
-	hostID, isActive, visibility, resultsVisibility, err := GetEventVisibilityStateFromDB(eventID)
-	if err != nil {
-		if errors.Is(err, ErrEventNotFound) {
-			http.Error(w, "Event not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Failed to fetch event", http.StatusInternalServerError)
+	if !authorizeResultsView(w, r, eventID) {
 		return
-	}
-
-	// Caller identity is optional; we only need it to authorize private views.
-	viewerID, _ := GetUserFromToken(r)
-	isHost := viewerID != 0 && viewerID == hostID
-
-	switch {
-	case isHost:
-		// Host always sees results.
-	case resultsVisibility == "after_conclusion" && isActive:
-		http.Error(w, "Results are hidden until the event is closed", http.StatusForbidden)
-		return
-	default:
-		// resultsVisibility == "live" OR event closed: members of invite-only events
-		// must be members; public events are open.
-		if visibility != "public" {
-			if viewerID == 0 {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			isMember, mErr := IsEventMemberFromDB(eventID, viewerID)
-			if mErr != nil {
-				http.Error(w, "Failed to verify membership", http.StatusInternalServerError)
-				return
-			}
-			if !isMember {
-				http.Error(w, "You are not a member of this event", http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	results, err := GetEventResultsFromDB(eventID, categoryID)
@@ -247,6 +247,38 @@ func GetEventResultsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+// GetAllEventResultsHandler returns results for every category in the event.
+func GetAllEventResultsHandler(w http.ResponseWriter, r *http.Request) {
+	// Path: /events/{id}/results
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	if !authorizeResultsView(w, r, eventID) {
+		return
+	}
+
+	resp, err := GetAllEventResultsFromDB(eventID)
+	if err != nil {
+		if errors.Is(err, ErrEventNotFound) {
+			http.Error(w, "Event not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // RecordVoteHandler records a vote from an authenticated user

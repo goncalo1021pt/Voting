@@ -24,6 +24,7 @@ type Event struct {
 	IsMember         bool        `json:"is_member,omitempty"`
 	MyVotes          map[int]int `json:"my_votes,omitempty"`
 	RequireFullBallot bool       `json:"require_full_ballot"`
+	MemberCount      int         `json:"member_count"`
 }
 
 // EventMember represents a user's membership in an event
@@ -84,6 +85,23 @@ type ResultsResponse struct {
 	Results      []Result `json:"results"`
 	TotalVotes   int      `json:"total_votes"`
 	MemberCount  int      `json:"member_count"`
+}
+
+// CategoryResults is the per-category slice of an EventResultsResponse.
+type CategoryResults struct {
+	CategoryID   int      `json:"category_id"`
+	CategoryName string   `json:"category_name"`
+	Results      []Result `json:"results"`
+	TotalVotes   int      `json:"total_votes"`
+}
+
+// EventResultsResponse is the all-categories results payload.
+type EventResultsResponse struct {
+	EventID     int               `json:"event_id"`
+	EventName   string            `json:"event_name"`
+	IsActive    bool              `json:"is_active"`
+	MemberCount int               `json:"member_count"`
+	Categories  []CategoryResults `json:"categories"`
 }
 
 // Auth request/response types
