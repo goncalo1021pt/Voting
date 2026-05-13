@@ -95,10 +95,127 @@ const API = {
     deleteEvent: (id) => api("DELETE", `/events/${id}`),
 };
 
+// ---------- Event import (JSON) ----------
+//
+// Schema:
+//   {
+//     "name": "...",                    required
+//     "description": "...",             optional
+//     "visibility": "public" | "invite-only",   default "invite-only"
+//     "results_visibility": "after_conclusion" | "live",  default "after_conclusion"
+//     "require_full_ballot": true|false,  default false
+//     "lists": { "name": ["a", "b", ...] },   optional, reusable option lists
+//     "categories": [
+//       { "name": "...", "options": "listName" | ["opt1", "opt2", ...] }
+//     ]
+//   }
+//
+// Returns the payload accepted by POST /events. Throws on invalid input.
+function parseEventImport(text) {
+    let doc;
+    try {
+        doc = JSON.parse(text);
+    } catch (err) {
+        throw new Error(`Invalid JSON: ${err.message}`);
+    }
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+        throw new Error("Top-level value must be an object");
+    }
+    const name = typeof doc.name === "string" ? doc.name.trim() : "";
+    if (!name) throw new Error('Missing required field "name"');
+
+    const visibility = doc.visibility === "public" ? "public" : "invite-only";
+    const resultsVisibility = doc.results_visibility === "live" ? "live" : "after_conclusion";
+    const requireFullBallot = doc.require_full_ballot === true;
+
+    const lists = doc.lists && typeof doc.lists === "object" ? doc.lists : {};
+    for (const [listName, items] of Object.entries(lists)) {
+        if (!Array.isArray(items) || !items.every((s) => typeof s === "string")) {
+            throw new Error(`List "${listName}" must be an array of strings`);
+        }
+    }
+
+    if (!Array.isArray(doc.categories) || doc.categories.length === 0) {
+        throw new Error('"categories" must be a non-empty array');
+    }
+    const categories = doc.categories.map((cat, i) => {
+        if (!cat || typeof cat !== "object") {
+            throw new Error(`Category #${i + 1} must be an object`);
+        }
+        const catName = typeof cat.name === "string" ? cat.name.trim() : "";
+        if (!catName) throw new Error(`Category #${i + 1} is missing "name"`);
+
+        let options;
+        if (typeof cat.options === "string") {
+            const ref = lists[cat.options];
+            if (!ref) throw new Error(`Category "${catName}" references unknown list "${cat.options}"`);
+            options = ref.slice();
+        } else if (Array.isArray(cat.options) && cat.options.every((s) => typeof s === "string")) {
+            options = cat.options.slice();
+        } else {
+            throw new Error(`Category "${catName}" needs "options" as a list name (string) or an array of strings`);
+        }
+        options = options.map((s) => s.trim()).filter(Boolean);
+        if (options.length < 2) {
+            throw new Error(`Category "${catName}" needs at least 2 options`);
+        }
+        return { name: catName, options };
+    });
+
+    return {
+        name,
+        description: typeof doc.description === "string" ? doc.description : "",
+        visibility,
+        results_visibility: resultsVisibility,
+        require_full_ballot: requireFullBallot,
+        categories,
+    };
+}
+
+// Build the help-content shown when the user clicks the "?" next to the
+// import card. Documents required/optional fields and allowed enum values.
+function importHelpContent() {
+    const code = (s) => el("code", {}, s);
+    function field(name, required, type, allowed, dflt) {
+        const tags = [
+            el("span", { class: "tag " + (required ? "accent" : "subtle") }, required ? "required" : "optional"),
+        ];
+        return el("div", { class: "help-field" }, [
+            el("div", { class: "help-field-head" }, [
+                code(name),
+                ...tags,
+            ]),
+            el("p", { class: "muted" }, [
+                type,
+                allowed ? el("span", {}, [" — allowed: ", ...allowed.flatMap((v, i) => i === 0 ? [code(v)] : [", ", code(v)])]) : null,
+                dflt ? el("span", {}, [" — default: ", code(dflt)]) : null,
+            ]),
+        ]);
+    }
+    return el("div", { class: "help-list" }, [
+        el("p", { class: "modal-body" }, "Upload a JSON file with this shape. Click ", el("strong", {}, "Download template"), " for a working example you can edit."),
+
+        el("h3", { class: "help-section" }, "Top-level fields"),
+        field("name", true, "string"),
+        field("categories", true, "array (at least 1)"),
+        field("description", false, "string"),
+        field("visibility", false, "string", ["public", "invite-only"], "invite-only"),
+        field("results_visibility", false, "string", ["after_conclusion", "live"], "after_conclusion"),
+        field("require_full_ballot", false, "boolean", ["true", "false"], "false"),
+        field("lists", false, "object — named option lists you can reuse"),
+
+        el("h3", { class: "help-section" }, "Each category needs"),
+        field("name", true, "string"),
+        field("options", true, "string (a list name from \"lists\") OR array of strings (≥ 2)"),
+    ]);
+}
+
 // ---------- Modal dialog ----------
 
 // Returns a Promise<boolean> — resolves true if confirmed, false if cancelled.
-function dialog({ eyebrow = "Confirm", title, body, confirm: confirmLabel = "Confirm", danger = false } = {}) {
+// `body` may be a string (wrapped in <p>) or a DOM node (appended as-is).
+// `infoOnly` hides the Cancel button — used for help/info popups.
+function dialog({ eyebrow = "Confirm", title, body, confirm: confirmLabel = "Confirm", danger = false, infoOnly = false } = {}) {
     return new Promise((resolve) => {
         const backdrop = el("div", { class: "modal-backdrop" });
 
@@ -119,15 +236,19 @@ function dialog({ eyebrow = "Confirm", title, body, confirm: confirmLabel = "Con
             onClick: () => { document.removeEventListener("keydown", onKey); close(true); },
         }, confirmLabel);
 
-        const cancelBtn = el("button", {
+        const cancelBtn = infoOnly ? null : el("button", {
             class: "secondary",
             onClick: () => { document.removeEventListener("keydown", onKey); close(false); },
         }, "Cancel");
 
+        let bodyNode = null;
+        if (body instanceof Node) bodyNode = body;
+        else if (typeof body === "string" && body) bodyNode = el("p", { class: "modal-body" }, body);
+
         backdrop.appendChild(el("div", { class: "modal" }, [
             el("p", { class: "modal-eyebrow" }, eyebrow),
             el("h2", { class: "modal-title" }, title),
-            body ? el("p", { class: "modal-body" }, body) : null,
+            bodyNode,
             el("div", { class: "button-row" }, [confirmBtn, cancelBtn]),
         ]));
 
@@ -657,9 +778,74 @@ async function viewCreateEvent() {
 
     addCategory();
 
+    // Hidden file input wired to the visible "Choose file" button.
+    const fileInput = el("input", {
+        type: "file",
+        accept: "application/json,.json",
+        style: "display:none;",
+        onChange: async (e) => {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (!file) return;
+            let text;
+            try {
+                text = await file.text();
+            } catch (err) {
+                toast("Could not read file", "error");
+                return;
+            }
+            let payload;
+            try {
+                payload = parseEventImport(text);
+            } catch (err) {
+                toast(err.message, "error");
+                return;
+            }
+            try {
+                const created = await API.createEvent(payload);
+                toast(`Imported "${created.name}"`, "success");
+                navigate(`#/events/${created.id}`);
+            } catch (err) {
+                toast(err.message || "Failed to create event", "error");
+            }
+        },
+    });
+
+    const helpBtn = el("button", {
+        type: "button",
+        class: "help-button",
+        "aria-label": "Show file format reference",
+        title: "Show file format reference",
+        onClick: () => dialog({
+            eyebrow: "File format",
+            title: "Import schema reference",
+            body: importHelpContent(),
+            infoOnly: true,
+            confirm: "Got it",
+        }),
+    }, "?");
+
+    const importCard = el("section", { class: "card import-card" }, [
+        el("p", { class: "eyebrow" }, "Bulk import"),
+        el("div", { class: "import-card-head" }, [
+            el("h2", {}, "Import from a file"),
+            helpBtn,
+        ]),
+        el("p", { class: "muted" },
+            "Have many categories? Upload a JSON file to create the entire event in one step. " +
+            "Define reusable option lists once and reference them from each category."),
+        el("div", { class: "button-row" }, [
+            el("button", { type: "button", onClick: () => fileInput.click() }, "Choose JSON file"),
+            el("a", { class: "btn secondary", href: "/event-template.json", download: "event-template.json" }, "Download template"),
+        ]),
+        fileInput,
+    ]);
+
     render(
         el("p", { class: "eyebrow" }, "New ceremony"),
         el("h1", {}, "Host an event."),
+        importCard,
+        el("p", { class: "muted divider-note" }, "— or fill in the form below —"),
         form,
     );
 }
