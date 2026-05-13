@@ -845,8 +845,14 @@ button:disabled, .btn:disabled {
     padding: 32px;
     max-width: 440px;
     width: 100%;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
     box-shadow: var(--shadow-card);
     animation: modalIn 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.modal:has(.help-list) {
+    max-width: 540px;
 }
 
 @keyframes modalIn {
@@ -940,3 +946,109 @@ button:disabled, .btn:disabled {
         height: 92px;
     }
 }
+
+/* ==========================================================================
+   Bulk import card (create event page)
+   ========================================================================== */
+
+.import-card {
+    border-left: 3px solid var(--accent);
+    margin-bottom: 24px;
+}
+
+.import-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.import-card-head h2 {
+    margin: 0;
+}
+
+.import-card .muted {
+    margin-bottom: 18px;
+    max-width: 60ch;
+}
+
+.help-button {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-faded);
+    font-family: "Manrope", sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.help-button:hover {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: var(--paper);
+}
+
+.divider-note {
+    text-align: center;
+    color: var(--ink-faded);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-size: 0.78rem;
+    margin: 28px 0;
+}
+
+/* Schema reference modal content */
+.help-list .modal-body {
+    margin-bottom: 16px;
+}
+
+.help-section {
+    margin: 18px 0 6px;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-faded);
+    font-weight: 600;
+}
+
+.help-field {
+    padding: 10px 0;
+    border-top: 1px solid var(--rule);
+}
+
+.help-field:first-of-type {
+    border-top: none;
+}
+
+.help-field-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.help-field-head code {
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+    font-size: 0.92rem;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.help-field .muted code {
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+    font-size: 0.85rem;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+

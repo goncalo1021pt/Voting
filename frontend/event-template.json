@@ -1,0 +1,22 @@
+{
+  "name": "Friend Group Awards 2026",
+  "description": "Our friend-group end-of-year awards.",
+  "visibility": "invite-only",
+  "results_visibility": "after_conclusion",
+  "require_full_ballot": false,
+  "lists": {
+    "amigos": [
+      "goncalo",
+      "pedro",
+      "samuel",
+      "vasco",
+      "margarida",
+      "ines Lopes"
+    ]
+  },
+  "categories": [
+    { "name": "Most likely to be late", "options": "amigos" },
+    { "name": "Best cook",              "options": "amigos" },
+    { "name": "Funniest",               "options": ["pedro", "samuel"] }
+  ]
+}
