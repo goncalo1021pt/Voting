@@ -53,6 +53,10 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Event name is required", http.StatusBadRequest)
 		return
 	}
+	if msg, ok := validateEventShape(req); !ok {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 
 	if req.Visibility != "public" && req.Visibility != "invite-only" {
 		req.Visibility = "invite-only"
@@ -323,6 +327,47 @@ func RecordVoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(vote)
+}
+
+// Bounds on an event payload, enforced before any DB work. These cap resource
+// use from a single create/import request; the per-field limits also match the
+// VARCHAR(255) columns in the schema.
+const (
+	maxNameLen       = 255
+	maxDescLen       = 5000
+	maxCategories    = 100
+	maxOptionsPerCat = 200
+)
+
+// validateEventShape checks the size/shape of a CreateEventRequest. It returns
+// a human-readable reason and false when the payload is out of bounds.
+func validateEventShape(req CreateEventRequest) (string, bool) {
+	if len(req.Name) > maxNameLen {
+		return "Event name is too long", false
+	}
+	if len(req.Description) > maxDescLen {
+		return "Event description is too long", false
+	}
+	if len(req.Categories) > maxCategories {
+		return fmt.Sprintf("Too many categories (max %d)", maxCategories), false
+	}
+	for _, cat := range req.Categories {
+		if cat.Name == "" {
+			return "Category name is required", false
+		}
+		if len(cat.Name) > maxNameLen {
+			return "Category name is too long", false
+		}
+		if len(cat.Options) > maxOptionsPerCat {
+			return fmt.Sprintf("Too many options in a category (max %d)", maxOptionsPerCat), false
+		}
+		for _, opt := range cat.Options {
+			if len(opt) > maxNameLen {
+				return "Option name is too long", false
+			}
+		}
+	}
+	return "", true
 }
 
 // generateInvitationToken creates a random invitation token
