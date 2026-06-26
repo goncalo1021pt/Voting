@@ -19,7 +19,7 @@ func InitDB() error {
 	dbPassword := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 
-	// Set defaults
+	// Non-secret defaults are fine for local convenience; the password is not.
 	if dbHost == "" {
 		dbHost = "localhost"
 	}
@@ -29,11 +29,13 @@ func InitDB() error {
 	if dbUser == "" {
 		dbUser = "voting_user"
 	}
-	if dbPassword == "" {
-		dbPassword = "voting_password"
-	}
 	if dbName == "" {
 		dbName = "voting_db"
+	}
+
+	// Fail fast rather than booting with a well-known default credential.
+	if dbPassword == "" {
+		return fmt.Errorf("DB_PASSWORD is not set; refusing to start with an empty/default database password")
 	}
 
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",

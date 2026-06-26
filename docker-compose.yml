@@ -8,8 +8,9 @@ services:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "5432:5432"
+    # No host port mapping: Postgres is reachable only on the internal Compose
+    # network (the backend connects via the service name). Add a `ports:` entry
+    # back temporarily if you need direct DB access for debugging.
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
@@ -12,12 +13,25 @@ func main() {
 	}
 	defer CloseDB()
 
-	http.HandleFunc("/", RouteHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", RouteHandler)
+
+	// Middleware chain (outermost first): cap request bodies, then CORS.
+	handler := CORSMiddleware(MaxBytesMiddleware(mux))
 
 	port := ":8080"
-	log.Printf("Starting voting server on http://localhost%s\n", port)
+	srv := &http.Server{
+		Addr:    port,
+		Handler: handler,
+		// Timeouts guard against slow-client (Slowloris) resource exhaustion.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
-	if err := http.ListenAndServe(port, CORSMiddleware(http.DefaultServeMux)); err != nil {
+	log.Printf("Starting voting server on http://localhost%s\n", port)
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

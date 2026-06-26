@@ -32,14 +32,14 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	// Auth routes (public)
 	switch {
 	case path == "/auth/register" && r.Method == "POST":
-		RegisterHandler(w, r)
+		RateLimit(RegisterHandler)(w, r)
 	case path == "/auth/login" && r.Method == "POST":
-		LoginHandler(w, r)
+		RateLimit(LoginHandler)(w, r)
 	case path == "/auth/logout" && r.Method == "POST":
 		LogoutHandler(w, r)
 	case path == "/auth/me" && r.Method == "GET":
 		RequireAuth(MeHandler)(w, r)
-	
+
 	// Event routes (check most specific first)
 	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
 		GetEventResultsHandler(w, r)
