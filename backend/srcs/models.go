@@ -44,6 +44,7 @@ type Invitation struct {
 	RedeemedBy *int     `json:"redeemed_by,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
+	RedeemedByUsername *string `json:"redeemed_by_username,omitempty"`
 }
 
 // Category represents a voting category within an event
