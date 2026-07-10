@@ -1,9 +1,11 @@
+name: events
+
 services:
   postgres:
     build:
       context: ./postgres
       dockerfile: Dockerfile
-    container_name: voting-db
+    container_name: events-db
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -14,7 +16,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - voting-network
+      - events-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -25,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: voting-backend
+    container_name: events-backend
     ports:
       - "8080:8080"
     environment:
@@ -38,11 +40,11 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - voting-network
+      - events-network
 
 volumes:
   postgres_data:
 
 networks:
-  voting-network:
+  events-network:
     driver: bridge

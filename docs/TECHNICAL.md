@@ -5,13 +5,13 @@
 - **Backend** — Go 1.21, standard library `net/http` (no web framework), `github.com/lib/pq` as the Postgres driver, `golang.org/x/crypto` for password hashing.
 - **Database** — PostgreSQL 15.
 - **Frontend** — Vanilla JS SPA (hash-routed, no framework or bundler). Three static files served by the Go backend: `index.html`, `styles.css`, `app.js`.
-- **Containerisation** — Docker + Docker Compose. Two services: `voting-db` (Postgres) and `voting-backend` (Go).
+- **Containerisation** — Docker + Docker Compose. Two services: `events-db` (Postgres) and `events-backend` (Go).
 - **Build / dev workflow** — Makefile at the repo root (`docker compose` targets) and inside `backend/` (local Go build targets).
 
 ## Repository layout
 
 ```
-Voting/
+events/
 ├── .env.example                # Required env vars — copy to .env and fill in
 ├── docker-compose.yml          # Orchestrates db + backend
 ├── Makefile                    # Top-level dev commands (make run, make logs, …)

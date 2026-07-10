@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voting App</title>
-    <meta name="description" content="An awards-show style voting platform.">
+    <title>Events</title>
+    <meta name="description" content="Awards-show style voting for your events.">
     <link rel="stylesheet" href="/styles.css">
     <script>
         // Set theme before paint to avoid a flash.
         (function () {
             try {
-                var stored = localStorage.getItem("voting.theme");
+                var stored = localStorage.getItem("events.theme");
                 var theme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
                 document.documentElement.setAttribute("data-theme", theme);
             } catch (e) {
@@ -21,7 +21,7 @@
 </head>
 <body>
     <header class="topbar">
-        <a href="#/" class="brand" aria-label="Voting App home">
+        <a href="#/" class="brand" aria-label="Events home">
             <span class="brand-mark" aria-hidden="true">
                 <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="50" cy="50" r="44" stroke="currentColor" stroke-width="2.5"/>
@@ -34,7 +34,7 @@
                     <path d="M30 33 L50 70 L70 33" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
                 </svg>
             </span>
-            Voting App
+            Events
         </a>
         <nav id="nav" aria-label="Primary"></nav>
         <div class="actions" id="actions"></div>

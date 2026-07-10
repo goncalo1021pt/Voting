@@ -9,16 +9,16 @@ RUN go mod download 2>/dev/null || true
 COPY backend/srcs/ ./srcs/
 COPY frontend/ ./frontend/
 
-RUN go build -o voting-server ./srcs
+RUN go build -o events-server ./srcs
 
 # Runtime stage
 FROM alpine:latest
 
 WORKDIR /app
 
-COPY --from=builder /app/voting-server .
+COPY --from=builder /app/events-server .
 COPY --from=builder /app/frontend ./frontend
 
 EXPOSE 8080
 
-CMD ["./voting-server"]
+CMD ["./events-server"]
