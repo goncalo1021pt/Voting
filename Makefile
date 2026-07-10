@@ -22,7 +22,7 @@ fclean: clean
 	@echo "All containers and images removed"
 
 prune:
-	docker volume rm voting_postgres_data 2>/dev/null || true
+	docker volume rm events_postgres_data 2>/dev/null || true
 	docker network prune -f
 	@echo "Volume and networks removed"
 

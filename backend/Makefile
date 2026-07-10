@@ -2,7 +2,7 @@
 
 # Build the backend locally
 build: lint
-	go build -o voting-server ./srcs
+	go build -o events-server ./srcs
 	@echo "✅ Backend built successfully"
 
 # Run linter and checks
@@ -17,7 +17,7 @@ test:
 
 # Clean build artifacts
 clean:
-	rm -f voting-server
+	rm -f events-server
 	go clean
 	@echo "✅ Build artifacts cleaned"
 

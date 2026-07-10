@@ -27,10 +27,10 @@ func InitDB() error {
 		dbPort = "5432"
 	}
 	if dbUser == "" {
-		dbUser = "voting_user"
+		dbUser = "events_user"
 	}
 	if dbName == "" {
-		dbName = "voting_db"
+		dbName = "events_db"
 	}
 
 	// Fail fast rather than booting with a well-known default credential.

@@ -1,4 +1,4 @@
-module voting
+module events
 
 go 1.21
 

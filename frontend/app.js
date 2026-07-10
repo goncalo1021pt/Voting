@@ -1,4 +1,4 @@
-// Voting App — vanilla SPA, hash-routed, awards-editorial theme.
+// Events — vanilla SPA, hash-routed, awards-editorial theme.
 //
 // Routes:
 //   #/                            front page (logo + CTAs)
@@ -12,9 +12,9 @@
 //   #/invitations/:token          redeem invite (auth)
 //   #/profile                     profile page (auth)
 
-const TOKEN_KEY = "voting.token";
-const USER_KEY = "voting.user";
-const THEME_KEY = "voting.theme";
+const TOKEN_KEY = "events.token";
+const USER_KEY = "events.user";
+const THEME_KEY = "events.theme";
 
 // ---------- Theme ----------
 
@@ -503,10 +503,7 @@ async function viewHome() {
         el("div", { class: "logo-mark" }, [bigLogo()]),
         el("div", {}, [
             el("p", { class: "eyebrow" }, "An awards-show in a browser tab"),
-            el("h1", { class: "wordmark" }, [
-                "Voting ",
-                el("em", {}, "App"),
-            ]),
+            el("h1", { class: "wordmark" }, "Events"),
         ]),
         el("p", { class: "tagline" },
             "Host an evening of categories, nominees, and ceremony — or join the audience and cast your votes."),

@@ -30,7 +30,7 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	log.Printf("Starting voting server on http://localhost%s\n", port)
+	log.Printf("Starting Events server on http://localhost%s\n", port)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
