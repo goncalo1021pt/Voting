@@ -86,6 +86,8 @@ const API = {
     closeEvent: (id) => api("POST", `/events/${id}/close`),
     joinEvent: (id) => api("POST", `/events/${id}/join`),
     createInvitation: (eventId) => api("POST", `/events/${eventId}/invitations`),
+    listInvitations: (eventId) => api("GET", `/events/${eventId}/invitations`),
+    revokeInvitation: (eventId, token) => api("DELETE", `/events/${eventId}/invitations/${token}`),
     redeemInvitation: (token) => api("POST", `/invitations/${token}`),
     vote: (categoryId, optionId) =>
         api("POST", "/votes", { category_id: categoryId, option_id: optionId }),
@@ -852,6 +854,114 @@ async function viewCreateEvent() {
 
 // ---------- Event detail ----------
 
+// Build the host-only "Invitations" card. Self-fetches the invitation list,
+// re-renders on create/revoke. Returns a DOM section node.
+function buildInvitationsCard(eventId) {
+    const listMount = el("div", { class: "invitation-list" });
+
+    function shortToken(token) {
+        if (typeof token !== "string" || token.length <= 14) return token;
+        return token.slice(0, 8) + "…" + token.slice(-4);
+    }
+
+    function renderList(invites) {
+        clear(listMount);
+        if (!invites.length) {
+            listMount.appendChild(el("p", { class: "muted" }, "No invitations yet — create a link to invite someone."));
+            return;
+        }
+        invites.forEach((inv) => {
+            const isRedeemed = inv.redeemed_by != null;
+            const link = `${location.origin}/#/invitations/${inv.token}`;
+            const statusTag = isRedeemed
+                ? el("span", { class: "tag subtle" }, `redeemed by @${inv.redeemed_by_username || "unknown"}`)
+                : el("span", { class: "tag success" }, "outstanding");
+
+            const actions = el("div", { class: "button-row" }, [
+                !isRedeemed ? el("button", {
+                    class: "secondary",
+                    onClick: async () => {
+                        try {
+                            await navigator.clipboard.writeText(link);
+                            toast("Invite link copied", "success");
+                        } catch {
+                            toast(link, "");
+                        }
+                    },
+                }, "Copy link") : null,
+                !isRedeemed ? el("button", {
+                    class: "danger",
+                    onClick: async () => {
+                        const ok = await dialog({
+                            eyebrow: "Host action",
+                            title: "Revoke this invitation?",
+                            body: "Anyone holding this link will no longer be able to join.",
+                            confirm: "Revoke",
+                            danger: true,
+                        });
+                        if (!ok) return;
+                        try {
+                            await API.revokeInvitation(eventId, inv.token);
+                            toast("Invitation revoked", "success");
+                            reload();
+                        } catch (err) {
+                            toast(err.message || "Failed to revoke", "error");
+                        }
+                    },
+                }, "Revoke") : null,
+            ]);
+
+            const row = el("div", { class: "invitation-row" }, [
+                el("div", { class: "invitation-row-main" }, [
+                    el("code", { class: "invitation-token" }, shortToken(inv.token)),
+                    statusTag,
+                ]),
+                actions,
+            ]);
+            listMount.appendChild(row);
+        });
+    }
+
+    async function reload() {
+        try {
+            const invites = await API.listInvitations(eventId);
+            renderList(invites);
+        } catch (err) {
+            clear(listMount);
+            listMount.appendChild(el("p", { class: "muted" }, err.message || "Failed to load invitations."));
+        }
+    }
+
+    const createBtn = el("button", {
+        class: "secondary",
+        onClick: async () => {
+            try {
+                const inv = await API.createInvitation(eventId);
+                const link = `${location.origin}/#/invitations/${inv.token}`;
+                try { await navigator.clipboard.writeText(link); } catch {}
+                toast(`Invite link copied: ${link}`, "success");
+                reload();
+            } catch (err) {
+                toast(err.message || "Failed to create invite", "error");
+            }
+        },
+    }, "Create invite link");
+
+    const card = el("section", { class: "card" }, [
+        el("div", { class: "card-row" }, [
+            el("div", {}, [
+                el("p", { class: "eyebrow" }, "Invitations"),
+                el("h2", { style: "margin:0;" }, "Invite people"),
+            ]),
+            createBtn,
+        ]),
+        listMount,
+    ]);
+
+    reload();
+    return card;
+}
+
 async function viewEvent({ eventId }) {
     document.querySelector("main").classList.remove("narrow");
     let event;
@@ -893,17 +1003,6 @@ async function viewEvent({ eventId }) {
                     },
                 }, "Join event") : null,
             isHost && event.is_active ? el("button", {
-                class: "secondary",
-                onClick: async () => {
-                    try {
-                        const inv = await API.createInvitation(event.id);
-                        const link = `${location.origin}/#/invitations/${inv.token}`;
-                        try { await navigator.clipboard.writeText(link); } catch {}
-                        toast(`Invite link copied: ${link}`, "success");
-                    } catch (err) { toast(err.message || "Failed to create invite", "error"); }
-                },
-            }, "Create invite link") : null,
-            isHost && event.is_active ? el("button", {
                 class: "danger",
                 onClick: async () => {
                     const ok = await dialog({
@@ -936,8 +1035,10 @@ async function viewEvent({ eventId }) {
         ]),
     ]);
 
+    const invitationsCard = isHost && event.is_active ? buildInvitationsCard(event.id) : null;
+
     if (categories.length === 0) {
-        render(headerCard, el("p", { class: "muted" }, "No categories."));
+        render(headerCard, invitationsCard, el("p", { class: "muted" }, "No categories."));
         return;
     }
 
@@ -1041,6 +1142,7 @@ async function viewEvent({ eventId }) {
 
     render(
         headerCard,
+        invitationsCard,
         el("section", {}, [el("h2", {}, "Categories"), resultsLink, ...categoryBlocks, ballotRow]),
     );
 }

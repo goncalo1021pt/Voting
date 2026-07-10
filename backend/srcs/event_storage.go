@@ -238,6 +238,75 @@ func CreateInvitationInDB(eventID, invitedBy int, token string) (*Invitation, er
 	}, nil
 }
 
+// ListInvitationsForEventFromDB returns every invitation for an event, with
+// the redeemer's username joined in when redeemed.
+func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
+	rows, err := db.Query(`
+		SELECT i.id, i.event_id, i.token, i.invited_by, i.redeemed_by, i.created_at, i.redeemed_at, u.username
+		FROM invitations i
+		LEFT JOIN users u ON u.id = i.redeemed_by
+		WHERE i.event_id = $1
+		ORDER BY i.created_at DESC
+	`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list invitations: %w", err)
+	}
+	defer rows.Close()
+
+	invitations := []Invitation{}
+	for rows.Next() {
+		var inv Invitation
+		var redeemedBy sql.NullInt64
+		var redeemedAt sql.NullTime
+		var username sql.NullString
+		if err := rows.Scan(&inv.ID, &inv.EventID, &inv.Token, &inv.InvitedBy, &redeemedBy, &inv.CreatedAt, &redeemedAt, &username); err != nil {
+			return nil, fmt.Errorf("failed to scan invitation row: %w", err)
+		}
+		if redeemedBy.Valid {
+			id := int(redeemedBy.Int64)
+			inv.RedeemedBy = &id
+		}
+		if redeemedAt.Valid {
+			t := redeemedAt.Time
+			inv.RedeemedAt = &t
+		}
+		if username.Valid {
+			s := username.String
+			inv.RedeemedByUsername = &s
+		}
+		invitations = append(invitations, inv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("invitation rows error: %w", err)
+	}
+	return invitations, nil
+}
+
+// DeleteInvitationFromDB revokes an unredeemed invitation scoped to one event.
+// Returns ErrInvitationNotFound if no matching token exists for the event, or
+// ErrInvitationRedeemed if the invitation has already been used.
+func DeleteInvitationFromDB(eventID int, token string) error {
+	var redeemedBy sql.NullInt64
+	err := db.QueryRow(
+		"SELECT redeemed_by FROM invitations WHERE event_id = $1 AND token = $2",
+		eventID, token,
+	).Scan(&redeemedBy)
+	if err == sql.ErrNoRows {
+		return ErrInvitationNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("failed to look up invitation: %w", err)
+	}
+	if redeemedBy.Valid {
+		return ErrInvitationRedeemed
+	}
+	_, err = db.Exec("DELETE FROM invitations WHERE event_id = $1 AND token = $2", eventID, token)
+	if err != nil {
+		return fmt.Errorf("failed to delete invitation: %w", err)
+	}
+	return nil
+}
+
 // RedeemInvitationInDB redeems an invitation and adds user to event
 func RedeemInvitationInDB(token string, userID int) (int, error) {
 	tx, err := db.Begin()

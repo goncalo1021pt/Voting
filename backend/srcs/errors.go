@@ -12,4 +12,6 @@ var (
 	ErrNotMember        = errors.New("user is not a member of this event")
 	ErrNotHost          = errors.New("user is not the host of this event")
 	ErrSessionInvalid   = errors.New("session invalid or expired")
+	ErrInvitationNotFound = errors.New("invitation not found")
+	ErrInvitationRedeemed = errors.New("invitation already redeemed")
 )

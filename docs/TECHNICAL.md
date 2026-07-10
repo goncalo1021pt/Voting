@@ -75,6 +75,8 @@ Routed in `backend/srcs/routes.go`:
 | `POST` | `/events/{id}/close` | ✓ host | Close event |
 | `POST` | `/events/{id}/join` | ✓ | Join a public event |
 | `POST` | `/events/{id}/invitations` | ✓ host | Create invite token |
+| `GET` | `/events/{id}/invitations` | ✓ host | List invitations (outstanding + redeemed) |
+| `DELETE` | `/events/{id}/invitations/{token}` | ✓ host | Revoke an unredeemed invitation |
 | `POST` | `/invitations/{token}` | ✓ | Redeem invite token |
 | `POST` | `/votes` | ✓ | Cast a vote |
 | `GET` | `/events/{id}/results` | — | All-categories results (gated by visibility rules) |

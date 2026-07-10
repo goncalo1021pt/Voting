@@ -156,6 +156,89 @@ func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(invitation)
 }
 
+// ListInvitationsHandler returns every invitation for an event. Host-only.
+func ListInvitationsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Path: /events/{id}/invitations
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	isHost, err := IsEventHostFromDB(eventID, userID)
+	if err != nil || !isHost {
+		http.Error(w, "Only event host can view invitations", http.StatusForbidden)
+		return
+	}
+
+	invitations, err := ListInvitationsForEventFromDB(eventID)
+	if err != nil {
+		http.Error(w, "Failed to fetch invitations", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(invitations)
+}
+
+// RevokeInvitationHandler deletes an unredeemed invitation. Host-only.
+func RevokeInvitationHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Path: /events/{id}/invitations/{token}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+	token := parts[4]
+	if token == "" {
+		http.Error(w, "Invalid token", http.StatusBadRequest)
+		return
+	}
+
+	isHost, err := IsEventHostFromDB(eventID, userID)
+	if err != nil || !isHost {
+		http.Error(w, "Only event host can revoke invitations", http.StatusForbidden)
+		return
+	}
+
+	if err := DeleteInvitationFromDB(eventID, token); err != nil {
+		switch {
+		case errors.Is(err, ErrInvitationNotFound):
+			http.Error(w, "Invitation not found", http.StatusNotFound)
+		case errors.Is(err, ErrInvitationRedeemed):
+			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
+		default:
+			http.Error(w, "Failed to revoke invitation", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"token":%q,"message":"Invitation revoked"}`, eventID, token))
+}
+
 // RedeemInvitationHandler redeems an invitation and joins an event
 func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := GetUserFromToken(r)

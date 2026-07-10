@@ -1052,3 +1052,44 @@ button:disabled, .btn:disabled {
     border-radius: 3px;
 }
 
+
+/* ==========================================================================
+   Invitations card
+   ========================================================================== */
+
+.invitation-list {
+    display: flex;
+    flex-direction: column;
+    margin-top: 18px;
+}
+
+.invitation-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+    border-top: 1px solid var(--rule);
+    flex-wrap: wrap;
+}
+
+.invitation-row:first-child {
+    border-top: none;
+    padding-top: 4px;
+}
+
+.invitation-row-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.invitation-token {
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+    padding: 4px 10px;
+    border-radius: 4px;
+}
