@@ -13,6 +13,9 @@ func main() {
 	}
 	defer CloseDB()
 
+	// Fingerprint static assets so redeploys bust the browser cache.
+	InitAssetVersion()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RouteHandler)
 

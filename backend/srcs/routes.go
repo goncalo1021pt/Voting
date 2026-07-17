@@ -1,13 +1,55 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-const frontendDir = "frontend"
+var frontendDir = "frontend"
+
+// assetVersion fingerprints the static assets so their URLs change whenever
+// their contents do. Set once at startup by InitAssetVersion.
+var assetVersion = "dev"
+
+// InitAssetVersion hashes the fingerprinted assets into a short token. A change
+// to either file yields a new token, which busts the browser cache on the next
+// deploy without needing a manual hard refresh.
+func InitAssetVersion() {
+	h := sha256.New()
+	for _, name := range []string{"styles.css", "app.js"} {
+		if b, err := os.ReadFile(filepath.Join(frontendDir, name)); err == nil {
+			h.Write(b)
+		}
+	}
+	assetVersion = hex.EncodeToString(h.Sum(nil))[:10]
+}
+
+// injectAssetVersion appends the ?v=<version> fingerprint to the stylesheet and
+// script references in the HTML shell.
+func injectAssetVersion(html, version string) string {
+	html = strings.Replace(html, `href="/styles.css"`, `href="/styles.css?v=`+version+`"`, 1)
+	html = strings.Replace(html, `src="/app.js"`, `src="/app.js?v=`+version+`"`, 1)
+	return html
+}
+
+// serveIndex writes index.html with fingerprinted asset URLs and marks the HTML
+// itself no-cache, so a redeployed build is picked up immediately (no hard
+// refresh) while the fingerprinted assets stay cacheable long-term.
+func serveIndex(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile(filepath.Join(frontendDir, "index.html"))
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	io.WriteString(w, injectAssetVersion(string(b), assetVersion))
+}
 
 // serveFrontend serves a file from frontend/ if it exists, otherwise falls
 // back to index.html (so client-side routes resolve on hard refresh).
@@ -17,12 +59,23 @@ func serveFrontend(w http.ResponseWriter, r *http.Request) {
 		clean = "index.html"
 	}
 	full := filepath.Join(frontendDir, clean)
-	if info, err := os.Stat(full); err == nil && !info.IsDir() {
-		http.ServeFile(w, r, full)
+	info, err := os.Stat(full)
+
+	// index.html (explicit or SPA fallback) is rendered dynamically so its
+	// asset URLs carry the current fingerprint.
+	if err != nil || info.IsDir() || clean == "index.html" {
+		serveIndex(w, r)
 		return
 	}
-	// SPA fallback
-	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
+
+	// A fingerprinted asset is safe to cache forever (its URL changes when the
+	// content does); an un-fingerprinted request revalidates each load.
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeFile(w, r, full)
 }
 
 // RouteHandler handles all incoming requests
