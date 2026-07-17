@@ -671,19 +671,40 @@ async function viewCreateEvent() {
     let categoryCount = 1;
     const categoriesContainer = el("div", { id: "categories" });
 
-    function addCategory() {
+    // Build a category block. `prefill` optionally seeds the name and option
+    // values. "Duplicate" uses it to clone a category's options under a blank
+    // name, so repeated nominee lists only get typed once.
+    function makeCategoryBlock(prefill) {
         const idx = categoryCount++;
         const optionsContainer = el("div", { class: "options" });
+
+        const duplicate = () => {
+            const options = Array.from(optionsContainer.querySelectorAll(".option-name"))
+                .map((i) => i.value.trim())
+                .filter(Boolean);
+            const clone = makeCategoryBlock({ name: "", options });
+            block.after(clone);
+            clone.querySelector("input[name^='cat-']").focus();
+        };
+
         const block = el("div", { class: "category-block" }, [
             el("div", { class: "card-row" }, [
                 el("strong", {}, `Category ${idx}`),
-                el("button", {
-                    type: "button",
-                    class: "link",
-                    onClick: () => block.remove(),
-                }, "Remove"),
+                el("span", { class: "row-actions" }, [
+                    el("button", {
+                        type: "button",
+                        class: "link",
+                        title: "Copy these options into a new category with a blank name",
+                        onClick: duplicate,
+                    }, "Duplicate"),
+                    el("button", {
+                        type: "button",
+                        class: "link",
+                        onClick: () => block.remove(),
+                    }, "Remove"),
+                ]),
             ]),
-            el("label", {}, ["Name", el("input", { name: `cat-${idx}-name`, required: true, placeholder: "e.g. Game of the Year" })]),
+            el("label", {}, ["Name", el("input", { name: `cat-${idx}-name`, required: true, placeholder: "e.g. Game of the Year", value: prefill?.name ?? "" })]),
             el("p", { class: "eyebrow", style: "margin-top:8px;" }, "Options"),
             optionsContainer,
             el("button", {
@@ -692,14 +713,19 @@ async function viewCreateEvent() {
                 onClick: () => optionsContainer.appendChild(makeOptionRow()),
             }, "+ Add option"),
         ]);
-        optionsContainer.appendChild(makeOptionRow());
-        optionsContainer.appendChild(makeOptionRow());
-        categoriesContainer.appendChild(block);
+
+        const seed = prefill?.options?.length ? prefill.options : ["", ""];
+        for (const value of seed) optionsContainer.appendChild(makeOptionRow(value));
+        return block;
     }
 
-    function makeOptionRow() {
+    function addCategory() {
+        categoriesContainer.appendChild(makeCategoryBlock());
+    }
+
+    function makeOptionRow(value = "") {
         const row = el("div", { class: "option-row" });
-        const input = el("input", { class: "option-name", placeholder: "Option name", required: true });
+        const input = el("input", { class: "option-name", placeholder: "Option name", required: true, value });
         const remove = el("button", { type: "button", class: "secondary", onClick: () => row.remove() }, "×");
         row.appendChild(input);
         row.appendChild(remove);
