@@ -8,20 +8,20 @@
 
 :root,
 [data-theme="light"] {
-    --bg: #f4ece0;            /* warm parchment */
-    --bg-elevated: #faf3e8;
-    --paper: #fff9ee;
+    --bg: #e9ddca;            /* deeper parchment — lets cards lift off the page */
+    --bg-elevated: #f6edda;   /* inset fields / secondary surface */
+    --paper: #fffdf7;         /* near-white card surface */
     --ink: #1b1612;           /* deep ink */
-    --ink-soft: #4b3f33;
-    --ink-faded: #8a7867;
-    --rule: #c9b9a3;
-    --rule-strong: #8a7867;
+    --ink-soft: #463a2d;
+    --ink-faded: #6b5a47;     /* darkened to ~4.6:1 on --bg (WCAG AA) */
+    --rule: #c4b196;
+    --rule-strong: #9a8264;
     --accent: #b8841a;        /* warm gold */
-    --accent-strong: #8a5e0a;
+    --accent-strong: #835908;
     --danger: #9a2424;
     --success: #2f6b3a;
 
-    --grain-opacity: 0.07;
+    --grain-opacity: 0;       /* no grain in light mode — keeps text crisp */
     --vignette-opacity: 0;
     --shadow-card: 0 1px 0 rgba(27, 22, 18, 0.04), 0 24px 60px -28px rgba(27, 22, 18, 0.18);
 }
@@ -95,6 +95,15 @@ body::before {
     mix-blend-mode: multiply;
     background:
         url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.5' numOctaves='1' seed='9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Light mode reads best on clean paper: drop the grain overlay and the
+   noise baked into the body background image (dark mode keeps its texture). */
+[data-theme="light"] body {
+    background-image: none;
+}
+[data-theme="light"] body::before {
+    display: none;
 }
 
 a {
