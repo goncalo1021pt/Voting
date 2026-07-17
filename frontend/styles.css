@@ -423,6 +423,13 @@ a.card:hover {
     flex-wrap: wrap;
 }
 
+/* Grouped inline actions (e.g. Duplicate / Remove on a category header). */
+.row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .card-meta {
     display: flex;
     flex-wrap: wrap;
