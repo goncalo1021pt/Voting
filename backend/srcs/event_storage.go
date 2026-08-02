@@ -161,13 +161,16 @@ func GetEventFromDB(eventID int) (*Event, error) {
 		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
 	).Scan(&event.MemberCount)
 
-	// Turnout: members who have cast at least one vote anywhere in the event.
-	// Distinct because a voter casting a ballot in five categories is still
-	// one voter.
+	// Turnout: current members who have cast at least one vote anywhere in the
+	// event. Distinct because a voter filling in five categories is still one
+	// voter. Restricted to current members so this can't exceed member_count
+	// after a removal — a removed member's votes stay in the tallies, but they
+	// are no longer part of the "x of y voted" denominator.
 	db.QueryRow(`
 		SELECT COUNT(DISTINCT v.user_id)
 		FROM votes v
 		JOIN categories c ON c.id = v.category_id
+		JOIN event_members m ON m.user_id = v.user_id AND m.event_id = c.event_id
 		WHERE c.event_id = $1`, eventID,
 	).Scan(&event.VoterCount)
 
@@ -212,6 +215,65 @@ func GetEventFromDB(eventID int) (*Event, error) {
 }
 
 // IsEventHostFromDB checks if a user is the host of an event
+// ListMembersForEventFromDB returns everyone who has joined an event, host
+// first and then in join order.
+func ListMembersForEventFromDB(eventID int) ([]EventMember, error) {
+	rows, err := db.Query(`
+		SELECT m.user_id, u.username, m.joined_at, (m.user_id = e.host_id) AS is_host
+		FROM event_members m
+		JOIN users u ON u.id = m.user_id
+		JOIN events e ON e.id = m.event_id
+		WHERE m.event_id = $1
+		ORDER BY is_host DESC, m.joined_at ASC
+	`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list members: %w", err)
+	}
+	defer rows.Close()
+
+	members := []EventMember{}
+	for rows.Next() {
+		var m EventMember
+		if err := rows.Scan(&m.UserID, &m.Username, &m.JoinedAt, &m.IsHost); err != nil {
+			return nil, fmt.Errorf("failed to scan member row: %w", err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("member rows error: %w", err)
+	}
+	return members, nil
+}
+
+// RemoveMemberFromDB drops a user's membership in an event. Votes they already
+// cast are deliberately left in place — a tally shouldn't change retroactively
+// because someone was removed. The host can't be removed from their own event.
+func RemoveMemberFromDB(eventID, userID int) error {
+	var hostID int
+	if err := db.QueryRow("SELECT host_id FROM events WHERE id = $1", eventID).Scan(&hostID); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrEventNotFound
+		}
+		return fmt.Errorf("failed to fetch event: %w", err)
+	}
+	if hostID == userID {
+		return ErrCannotRemoveHost
+	}
+
+	res, err := db.Exec("DELETE FROM event_members WHERE event_id = $1 AND user_id = $2", eventID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to remove member: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm removal: %w", err)
+	}
+	if affected == 0 {
+		return ErrMemberNotFound
+	}
+	return nil
+}
+
 func IsEventHostFromDB(eventID, userID int) (bool, error) {
 	var hostID int
 	err := db.QueryRow(

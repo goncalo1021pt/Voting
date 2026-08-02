@@ -77,6 +77,8 @@ Routed in `backend/srcs/routes.go`:
 | `POST` | `/events/{id}/invitations` | ✓ host | Create invite token |
 | `GET` | `/events/{id}/invitations` | ✓ host | List invitations (outstanding + redeemed) |
 | `DELETE` | `/events/{id}/invitations/{token}` | ✓ host | Revoke an unredeemed invitation |
+| `GET` | `/events/{id}/members` | ✓ host | List members (host first, then join order) |
+| `DELETE` | `/events/{id}/members/{userId}` | ✓ host | Remove a member; their cast votes are kept |
 | `POST` | `/invitations/{token}` | ✓ | Redeem invite token |
 | `POST` | `/votes` | ✓ | Cast a vote |
 | `GET` | `/events/{id}/results` | — | All-categories results (gated by visibility rules) |

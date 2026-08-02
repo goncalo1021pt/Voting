@@ -1073,13 +1073,17 @@ button:disabled, .btn:disabled {
    Invitations card
    ========================================================================== */
 
-.invitation-list {
+/* The member roster is the same rule-separated row list as the invitation
+   list, so both share these. */
+.invitation-list,
+.member-list {
     display: flex;
     flex-direction: column;
     margin-top: 18px;
 }
 
-.invitation-row {
+.invitation-row,
+.member-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1089,12 +1093,14 @@ button:disabled, .btn:disabled {
     flex-wrap: wrap;
 }
 
-.invitation-row:first-child {
+.invitation-row:first-child,
+.member-row:first-child {
     border-top: none;
     padding-top: 4px;
 }
 
-.invitation-row-main {
+.invitation-row-main,
+.member-row-main {
     display: flex;
     align-items: center;
     gap: 12px;

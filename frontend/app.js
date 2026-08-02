@@ -89,6 +89,8 @@ const API = {
     listInvitations: (eventId) => api("GET", `/events/${eventId}/invitations`),
     revokeInvitation: (eventId, token) => api("DELETE", `/events/${eventId}/invitations/${token}`),
     redeemInvitation: (token) => api("POST", `/invitations/${token}`),
+    listMembers: (eventId) => api("GET", `/events/${eventId}/members`),
+    removeMember: (eventId, userId) => api("DELETE", `/events/${eventId}/members/${userId}`),
     vote: (categoryId, optionId) =>
         api("POST", "/votes", { category_id: categoryId, option_id: optionId }),
     getResults: (eventId, categoryId) =>
@@ -991,6 +993,80 @@ function buildInvitationsCard(eventId) {
     return card;
 }
 
+// Timestamps arrive as RFC3339 from the API; the day is all a member row needs.
+function formatJoinDate(iso) {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+}
+
+// Build the host-only "Members" card. Self-fetches the member list; a removal
+// re-runs the router because it also moves the member/turnout counts in the
+// header. Returns a DOM section node.
+function buildMembersCard(eventId) {
+    const listMount = el("div", { class: "member-list" });
+
+    function renderList(members) {
+        clear(listMount);
+        if (!members.length) {
+            listMount.appendChild(el("p", { class: "muted" }, "No members yet."));
+            return;
+        }
+        members.forEach((m) => {
+            const removeBtn = el("button", {
+                class: "danger",
+                onClick: async () => {
+                    const ok = await dialog({
+                        eyebrow: "Host action",
+                        title: `Remove @${m.username}?`,
+                        body: "They lose access to the event and stop counting towards turnout. Any votes they already cast stay in the results.",
+                        confirm: "Remove member",
+                        danger: true,
+                    });
+                    if (!ok) return;
+                    try {
+                        await API.removeMember(eventId, m.user_id);
+                        toast(`Removed @${m.username}`, "success");
+                        router();
+                    } catch (err) {
+                        toast(err.message || "Failed to remove member", "error");
+                    }
+                },
+            }, "Remove");
+
+            listMount.appendChild(el("div", { class: "member-row" }, [
+                el("div", { class: "member-row-main" }, [
+                    el("span", { class: "option-name" }, `@${m.username}`),
+                    m.is_host ? el("span", { class: "tag accent" }, "host") : null,
+                    el("span", { class: "muted" }, `joined ${formatJoinDate(m.joined_at)}`),
+                ]),
+                m.is_host ? null : el("div", { class: "button-row" }, [removeBtn]),
+            ]));
+        });
+    }
+
+    async function reload() {
+        try {
+            renderList(await API.listMembers(eventId));
+        } catch (err) {
+            clear(listMount);
+            listMount.appendChild(el("p", { class: "muted" }, err.message || "Failed to load members."));
+        }
+    }
+
+    const card = el("section", { class: "card" }, [
+        el("div", { class: "card-row" }, [
+            el("div", {}, [
+                el("p", { class: "eyebrow" }, "Members"),
+                el("h2", { style: "margin:0;" }, "Who has joined"),
+            ]),
+        ]),
+        listMount,
+    ]);
+
+    reload();
+    return card;
+}
+
 async function viewEvent({ eventId }) {
     document.querySelector("main").classList.remove("narrow");
     let event;
@@ -1067,9 +1143,12 @@ async function viewEvent({ eventId }) {
     ]);
 
     const invitationsCard = isHost && event.is_active ? buildInvitationsCard(event.id) : null;
+    // Unlike invitations, the roster stays visible after the event closes — a
+    // host still wants to see who took part.
+    const membersCard = isHost ? buildMembersCard(event.id) : null;
 
     if (categories.length === 0) {
-        render(headerCard, invitationsCard, el("p", { class: "muted" }, "No categories."));
+        render(headerCard, invitationsCard, membersCard, el("p", { class: "muted" }, "No categories."));
         return;
     }
 
@@ -1175,6 +1254,7 @@ async function viewEvent({ eventId }) {
     render(
         headerCard,
         invitationsCard,
+        membersCard,
         el("section", {}, [el("h2", {}, "Categories"), resultsLink, ...categoryBlocks, ballotRow]),
     );
 }

@@ -239,6 +239,92 @@ func RevokeInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"token":%q,"message":"Invitation revoked"}`, eventID, token))
 }
 
+// ListMembersHandler returns everyone who has joined an event. Host-only.
+func ListMembersHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Path: /events/{id}/members
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	isHost, err := IsEventHostFromDB(eventID, userID)
+	if err != nil || !isHost {
+		http.Error(w, "Only event host can view members", http.StatusForbidden)
+		return
+	}
+
+	members, err := ListMembersForEventFromDB(eventID)
+	if err != nil {
+		http.Error(w, "Failed to fetch members", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(members)
+}
+
+// RemoveMemberHandler removes a member from an event. Host-only. Votes the
+// member already cast are left in place.
+func RemoveMemberHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Path: /events/{id}/members/{userId}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+	memberID, err := strconv.Atoi(parts[4])
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	isHost, err := IsEventHostFromDB(eventID, userID)
+	if err != nil || !isHost {
+		http.Error(w, "Only event host can remove members", http.StatusForbidden)
+		return
+	}
+
+	if err := RemoveMemberFromDB(eventID, memberID); err != nil {
+		switch {
+		case errors.Is(err, ErrEventNotFound):
+			http.Error(w, "Event not found", http.StatusNotFound)
+		case errors.Is(err, ErrMemberNotFound):
+			http.Error(w, "Member not found", http.StatusNotFound)
+		case errors.Is(err, ErrCannotRemoveHost):
+			http.Error(w, "The host cannot be removed from their own event", http.StatusConflict)
+		default:
+			http.Error(w, "Failed to remove member", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"user_id":%d,"message":"Member removed"}`, eventID, memberID))
+}
+
 // RedeemInvitationHandler redeems an invitation and joins an event
 func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := GetUserFromToken(r)

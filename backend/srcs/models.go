@@ -28,12 +28,13 @@ type Event struct {
 	VoterCount        int         `json:"voter_count"`
 }
 
-// EventMember represents a user's membership in an event
+// EventMember represents a user's membership in an event, as returned by the
+// host-only member list. IsHost marks the one row that can't be removed.
 type EventMember struct {
-	ID       int       `json:"id"`
-	EventID  int       `json:"event_id"`
 	UserID   int       `json:"user_id"`
+	Username string    `json:"username"`
 	JoinedAt time.Time `json:"joined_at"`
+	IsHost   bool      `json:"is_host"`
 }
 
 // Invitation represents an invite to an event
