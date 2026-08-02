@@ -84,8 +84,8 @@ func CreateEventInDB(hostID int, name, description, visibility, resultsVisibilit
 	for _, catReq := range categories {
 		var categoryID int
 		err = tx.QueryRow(
-			"INSERT INTO categories (event_id, name) VALUES ($1, $2) RETURNING id",
-			eventID, catReq.Name,
+			"INSERT INTO categories (event_id, name, description) VALUES ($1, $2, $3) RETURNING id",
+			eventID, catReq.Name, catReq.Description,
 		).Scan(&categoryID)
 
 		if err != nil {
@@ -112,10 +112,11 @@ func CreateEventInDB(hostID int, name, description, visibility, resultsVisibilit
 		}
 
 		eventCategories = append(eventCategories, Category{
-			ID:      categoryID,
-			EventID: eventID,
-			Name:    catReq.Name,
-			Options: options,
+			ID:          categoryID,
+			EventID:     eventID,
+			Name:        catReq.Name,
+			Description: catReq.Description,
+			Options:     options,
 		})
 	}
 
@@ -162,7 +163,7 @@ func GetEventFromDB(eventID int) (*Event, error) {
 
 	// Get categories
 	rows, err := db.Query(
-		"SELECT id, event_id, name FROM categories WHERE event_id = $1",
+		"SELECT id, event_id, name, COALESCE(description, '') FROM categories WHERE event_id = $1",
 		eventID,
 	)
 	if err != nil {
@@ -172,7 +173,7 @@ func GetEventFromDB(eventID int) (*Event, error) {
 
 	for rows.Next() {
 		var category Category
-		if err := rows.Scan(&category.ID, &category.EventID, &category.Name); err != nil {
+		if err := rows.Scan(&category.ID, &category.EventID, &category.Name, &category.Description); err != nil {
 			continue
 		}
 

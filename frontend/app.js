@@ -108,7 +108,9 @@ const API = {
 //     "require_full_ballot": true|false,  default false
 //     "lists": { "name": ["a", "b", ...] },   optional, reusable option lists
 //     "categories": [
-//       { "name": "...", "options": "listName" | ["opt1", "opt2", ...] }
+//       { "name": "...",                  required
+//         "description": "...",           optional
+//         "options": "listName" | ["opt1", "opt2", ...] }
 //     ]
 //   }
 //
@@ -161,7 +163,8 @@ function parseEventImport(text) {
         if (options.length < 2) {
             throw new Error(`Category "${catName}" needs at least 2 options`);
         }
-        return { name: catName, options };
+        const catDescription = typeof cat.description === "string" ? cat.description.trim() : "";
+        return { name: catName, description: catDescription, options };
     });
 
     return {
@@ -209,6 +212,7 @@ function importHelpContent() {
         el("h3", { class: "help-section" }, "Each category needs"),
         field("name", true, "string"),
         field("options", true, "string (a list name from \"lists\") OR array of strings (≥ 2)"),
+        field("description", false, "string — shown under the category name when voting"),
     ]);
 }
 
@@ -705,6 +709,7 @@ async function viewCreateEvent() {
                 ]),
             ]),
             el("label", {}, ["Name", el("input", { name: `cat-${idx}-name`, required: true, placeholder: "e.g. Game of the Year", value: prefill?.name ?? "" })]),
+            el("label", {}, ["Description", el("input", { class: "category-description", placeholder: "Optional — e.g. Indie or AA, released this year" })]),
             el("p", { class: "eyebrow", style: "margin-top:8px;" }, "Options"),
             optionsContainer,
             el("button", {
@@ -745,6 +750,7 @@ async function viewCreateEvent() {
             for (const block of categoriesContainer.querySelectorAll(".category-block")) {
                 const catName = block.querySelector("input[name^='cat-']").value.trim();
                 if (!catName) continue;
+                const catDescription = block.querySelector(".category-description").value.trim();
                 const options = Array.from(block.querySelectorAll(".option-name"))
                     .map((i) => i.value.trim())
                     .filter(Boolean);
@@ -752,7 +758,7 @@ async function viewCreateEvent() {
                     toast(`Category "${catName}" needs at least 2 options`, "error");
                     return;
                 }
-                categories.push({ name: catName, options });
+                categories.push({ name: catName, description: catDescription, options });
             }
             if (!name) { toast("Event name required", "error"); return; }
             if (categories.length === 0) { toast("Add at least one category", "error"); return; }
@@ -1123,6 +1129,7 @@ async function viewEvent({ eventId }) {
 
         return el("article", { class: "card" }, [
             el("h3", {}, cat.name),
+            cat.description ? el("p", { class: "muted" }, cat.description) : null,
             optionsList,
             showResultsLink ? null : el("p", { class: "muted", style: "margin-top:8px;" }, "Results after event closes."),
         ]);
