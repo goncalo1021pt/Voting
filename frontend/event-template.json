@@ -15,7 +15,7 @@
     ]
   },
   "categories": [
-    { "name": "Most likely to be late", "options": "amigos" },
+    { "name": "Most likely to be late", "description": "Counted from the agreed meeting time, not when they said they left.", "options": "amigos" },
     { "name": "Best cook",              "options": "amigos" },
     { "name": "Funniest",               "options": ["pedro", "samuel"] }
   ]

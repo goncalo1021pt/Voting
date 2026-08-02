@@ -441,6 +441,9 @@ func validateEventShape(req CreateEventRequest) (string, bool) {
 		if len(cat.Name) > maxNameLen {
 			return "Category name is too long", false
 		}
+		if len(cat.Description) > maxDescLen {
+			return "Category description is too long", false
+		}
 		if len(cat.Options) > maxOptionsPerCat {
 			return fmt.Sprintf("Too many options in a category (max %d)", maxOptionsPerCat), false
 		}

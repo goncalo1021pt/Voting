@@ -49,11 +49,12 @@ type Invitation struct {
 
 // Category represents a voting category within an event
 type Category struct {
-	ID        int       `json:"id"`
-	EventID   int       `json:"event_id"`
-	Name      string    `json:"name"`
-	Options   []Option  `json:"options"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int       `json:"id"`
+	EventID     int       `json:"event_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Options     []Option  `json:"options"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Option represents a voting option within a category
@@ -134,8 +135,9 @@ type CreateEventRequest struct {
 
 // Category creation request
 type CreateCategoryRequest struct {
-	Name    string   `json:"name"`
-	Options []string `json:"options"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Options     []string `json:"options"`
 }
 
 // Vote request
