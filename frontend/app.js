@@ -1008,11 +1008,13 @@ async function viewEvent({ eventId }) {
     const showResultsLink = !event.is_active || event.results_visibility === "live" || isHost;
 
     const memberCount = event.member_count || 0;
+    const voterCount = event.voter_count || 0;
     const tags = [
         el("span", { class: "tag " + (event.visibility === "public" ? "subtle" : "accent") }, event.visibility),
         el("span", { class: "tag subtle" }, event.results_visibility === "live" ? "live results" : "results after close"),
         el("span", { class: event.is_active ? "tag success" : "tag danger" }, event.is_active ? "open" : "closed"),
         el("span", { class: "tag subtle" }, `${memberCount} member${memberCount === 1 ? "" : "s"}`),
+        el("span", { class: "tag subtle" }, `${voterCount} of ${memberCount} voted`),
         isHost ? el("span", { class: "tag accent" }, "you host") : null,
         event.require_full_ballot ? el("span", { class: "tag subtle" }, "full ballot required") : null,
     ];

@@ -12,19 +12,20 @@ type User struct {
 
 // Event represents a voting event (created by a host user)
 type Event struct {
-	ID                int            `json:"id"`
-	HostID            int            `json:"host_id"`
-	Name              string         `json:"name"`
-	Description       string         `json:"description"`
-	Visibility        string         `json:"visibility"`        // "public" or "invite-only"
-	ResultsVisibility string         `json:"results_visibility"` // "after_conclusion" or "live"
-	IsActive          bool           `json:"is_active"`
-	CreatedAt         time.Time      `json:"created_at"`
-	Categories        []Category     `json:"categories,omitempty"`
-	IsMember         bool        `json:"is_member,omitempty"`
-	MyVotes          map[int]int `json:"my_votes,omitempty"`
-	RequireFullBallot bool       `json:"require_full_ballot"`
-	MemberCount      int         `json:"member_count"`
+	ID                int         `json:"id"`
+	HostID            int         `json:"host_id"`
+	Name              string      `json:"name"`
+	Description       string      `json:"description"`
+	Visibility        string      `json:"visibility"`         // "public" or "invite-only"
+	ResultsVisibility string      `json:"results_visibility"` // "after_conclusion" or "live"
+	IsActive          bool        `json:"is_active"`
+	CreatedAt         time.Time   `json:"created_at"`
+	Categories        []Category  `json:"categories,omitempty"`
+	IsMember          bool        `json:"is_member,omitempty"`
+	MyVotes           map[int]int `json:"my_votes,omitempty"`
+	RequireFullBallot bool        `json:"require_full_ballot"`
+	MemberCount       int         `json:"member_count"`
+	VoterCount        int         `json:"voter_count"`
 }
 
 // EventMember represents a user's membership in an event
@@ -37,14 +38,14 @@ type EventMember struct {
 
 // Invitation represents an invite to an event
 type Invitation struct {
-	ID        int       `json:"id"`
-	EventID   int       `json:"event_id"`
-	Token     string    `json:"token"`
-	InvitedBy int       `json:"invited_by"`
-	RedeemedBy *int     `json:"redeemed_by,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
-	RedeemedByUsername *string `json:"redeemed_by_username,omitempty"`
+	ID                 int        `json:"id"`
+	EventID            int        `json:"event_id"`
+	Token              string     `json:"token"`
+	InvitedBy          int        `json:"invited_by"`
+	RedeemedBy         *int       `json:"redeemed_by,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	RedeemedAt         *time.Time `json:"redeemed_at,omitempty"`
+	RedeemedByUsername *string    `json:"redeemed_by_username,omitempty"`
 }
 
 // Category represents a voting category within an event
