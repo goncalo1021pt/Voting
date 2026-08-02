@@ -8,10 +8,31 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/mail"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// maxEmailLen matches the users.email column in the schema. Without this bound
+// an over-long address reaches Postgres and comes back as a 500 instead of a
+// straight answer about the input.
+const maxEmailLen = 255
+
+// normalizeEmail trims surrounding whitespace and reports whether what's left
+// is a single, parseable address. Display-name forms ("Bob <bob@example.com>")
+// parse fine but are rejected, so the address is the only thing ever stored.
+func normalizeEmail(raw string) (string, bool) {
+	email := strings.TrimSpace(raw)
+	if email == "" || len(email) > maxEmailLen {
+		return "", false
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Address != email {
+		return "", false
+	}
+	return email, true
+}
 
 // RegisterHandler handles user registration
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +53,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	email, ok := normalizeEmail(req.Email)
+	if !ok {
+		http.Error(w, "Invalid email address", http.StatusBadRequest)
+		return
+	}
+
 	if len(req.Password) < 6 {
 		http.Error(w, "Password must be at least 6 characters", http.StatusBadRequest)
 		return
@@ -45,7 +72,7 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create user in database
-	user, err := CreateUserInDB(req.Username, req.Email, string(hashedPassword))
+	user, err := CreateUserInDB(req.Username, email, string(hashedPassword))
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") {
 			http.Error(w, "Username or email already exists", http.StatusConflict)
