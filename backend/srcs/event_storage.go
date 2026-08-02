@@ -161,6 +161,16 @@ func GetEventFromDB(eventID int) (*Event, error) {
 		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
 	).Scan(&event.MemberCount)
 
+	// Turnout: members who have cast at least one vote anywhere in the event.
+	// Distinct because a voter casting a ballot in five categories is still
+	// one voter.
+	db.QueryRow(`
+		SELECT COUNT(DISTINCT v.user_id)
+		FROM votes v
+		JOIN categories c ON c.id = v.category_id
+		WHERE c.event_id = $1`, eventID,
+	).Scan(&event.VoterCount)
+
 	// Get categories
 	rows, err := db.Query(
 		"SELECT id, event_id, name, COALESCE(description, '') FROM categories WHERE event_id = $1",
