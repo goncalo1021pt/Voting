@@ -439,27 +439,87 @@ function setActiveNav() {
     });
 }
 
+// ---------- Loading skeletons ----------
+//
+// Shape-only stand-ins for a view's layout while its data is in flight. No
+// spinner: the bars pulse quietly and the page keeps its single entrance
+// animation for the real content.
+//
+// Only routes that actually fetch declare one. The placeholder is held back
+// by SKELETON_DELAY_MS so a fast response never flashes one — a skeleton that
+// appears and vanishes in 30ms reads as a glitch, not as feedback.
+const SKELETON_DELAY_MS = 160;
+
+const skBar = (width, extra = "") =>
+    el("div", { class: "sk-bar" + (extra ? " " + extra : ""), style: `width:${width};` });
+
+const skCard = (children) => el("div", { class: "card sk-card" }, children);
+
+const SKELETONS = {
+    // Event/profile lists: heading, then a stack of event cards.
+    list: () => [
+        el("div", { class: "sk-head" }, [skBar("26%", "sk-eyebrow"), skBar("52%", "sk-title")]),
+        ...Array.from({ length: 3 }, () => skCard([
+            skBar("46%", "sk-line-lg"),
+            skBar("72%"),
+            el("div", { class: "sk-tags" }, [skBar("64px", "sk-tag"), skBar("92px", "sk-tag")]),
+        ])),
+    ],
+    // Event detail: title block with its tag row, then category cards.
+    detail: () => [
+        el("div", { class: "sk-head" }, [
+            skBar("20%", "sk-eyebrow"),
+            skBar("58%", "sk-title"),
+            skBar("78%"),
+            el("div", { class: "sk-tags" }, [skBar("70px", "sk-tag"), skBar("118px", "sk-tag"), skBar("58px", "sk-tag")]),
+        ]),
+        ...Array.from({ length: 2 }, () => skCard([
+            skBar("38%", "sk-line-lg"),
+            el("div", { class: "sk-rows" }, [skBar("100%", "sk-row"), skBar("100%", "sk-row")]),
+        ])),
+    ],
+    // Results: heading, then tally rows over their bar tracks.
+    results: () => [
+        el("div", { class: "sk-head" }, [skBar("20%", "sk-eyebrow"), skBar("48%", "sk-title")]),
+        skCard([26, 34, 30, 22].map((label, i) => el("div", { class: "sk-result" }, [
+            skBar(`${label}%`),
+            skBar(`${[84, 62, 45, 28][i]}%`, "sk-track"),
+        ]))),
+    ],
+};
+
+// One top-level node, so the skeleton occupies a single slot in the page's
+// entrance stagger rather than re-running it per placeholder card.
+function skeleton(kind) {
+    return el("div", { class: "skeleton", "aria-hidden": "true" }, (SKELETONS[kind] || SKELETONS.list)());
+}
+
 // ---------- Router ----------
 
 const routes = [
     { pattern: /^#?\/?$/, view: viewHome },
     { pattern: /^#?\/login$/, view: viewLogin },
     { pattern: /^#?\/register$/, view: viewRegister },
-    { pattern: /^#?\/events$/, view: viewEvents, requireAuth: true },
+    { pattern: /^#?\/events$/, view: viewEvents, requireAuth: true, skeleton: "list" },
     { pattern: /^#?\/events\/new$/, view: viewCreateEvent, requireAuth: true },
-    { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"] },
-    { pattern: /^#?\/events\/(\d+)\/results$/, view: viewAllResults, params: ["eventId"] },
-    { pattern: /^#?\/events\/(\d+)$/, view: viewEvent, params: ["eventId"] },
+    { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"], skeleton: "results" },
+    { pattern: /^#?\/events\/(\d+)\/results$/, view: viewAllResults, params: ["eventId"], skeleton: "results" },
+    { pattern: /^#?\/events\/(\d+)$/, view: viewEvent, params: ["eventId"], skeleton: "detail" },
     { pattern: /^#?\/invitations\/([^/]+)$/, view: viewRedeemInvitation, params: ["token"], requireAuth: true },
-    { pattern: /^#?\/profile$/, view: viewProfile, requireAuth: true },
+    { pattern: /^#?\/profile$/, view: viewProfile, requireAuth: true, skeleton: "list" },
 ];
 
 function navigate(hash) {
     if (location.hash !== hash) location.hash = hash; else router();
 }
 
+// Bumped on every navigation so a pending skeleton from a superseded route
+// can tell it is stale and skip painting over whatever replaced it.
+let navSeq = 0;
+
 async function router() {
     const hash = location.hash || "#/";
+    const seq = ++navSeq;
     setActiveNav();
     for (const r of routes) {
         const m = hash.match(r.pattern);
@@ -471,6 +531,13 @@ async function router() {
             navigate("#/login");
             return;
         }
+        let skeletonTimer = null;
+        if (r.skeleton) {
+            $("main").setAttribute("aria-busy", "true");
+            skeletonTimer = setTimeout(() => {
+                if (seq === navSeq) render(skeleton(r.skeleton));
+            }, SKELETON_DELAY_MS);
+        }
         try {
             await r.view(params);
         } catch (err) {
@@ -481,6 +548,11 @@ async function router() {
             }
             console.error(err);
             render(el("div", { class: "error-box" }, err.message || String(err)));
+        } finally {
+            // Runs before any pending timer fires, so a view that resolves
+            // quickly never gets painted over by its own skeleton.
+            clearTimeout(skeletonTimer);
+            $("main").removeAttribute("aria-busy");
         }
         window.scrollTo({ top: 0, behavior: "instant" });
         return;

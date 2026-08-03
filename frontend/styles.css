@@ -936,6 +936,81 @@ button:disabled, .btn:disabled {
     to   { transform: translateY(0); opacity: 1; }
 }
 
+/* ==========================================================================
+   Loading skeletons
+   ========================================================================== */
+
+/* A placeholder is not a moment. It appears without the page entrance so the
+   one animation the reader notices is the real content arriving. */
+main > .skeleton {
+    animation: none;
+}
+
+/* Tinted from --ink so the bar sits the same distance off the card surface in
+   both themes: dark ink on parchment, warm cream on near-black. */
+.sk-bar {
+    height: 12px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.sk-head {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 28px;
+}
+
+.sk-eyebrow { height: 9px; }
+.sk-title   { height: 27px; }
+.sk-line-lg { height: 17px; }
+
+.sk-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sk-tags {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+.sk-tag { height: 20px; }
+
+.sk-rows {
+    display: grid;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.sk-row { height: 42px; }
+
+.sk-result {
+    display: grid;
+    gap: 9px;
+}
+
+.sk-result + .sk-result { margin-top: 18px; }
+
+.sk-track { height: 8px; }
+
+/* The bars pulse, not the container — fading the whole block would take the
+   card surfaces with it. They share one timing so the placeholder breathes
+   in unison; staggering would read as activity rather than as waiting. */
+@media (prefers-reduced-motion: no-preference) {
+    .sk-bar {
+        animation: skeletonPulse 1.8s ease-in-out infinite;
+    }
+}
+
+@keyframes skeletonPulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.5; }
+}
+
 /* Responsive */
 @media (max-width: 720px) {
     .topbar {
