@@ -14,6 +14,7 @@ var (
 	ErrSessionInvalid     = errors.New("session invalid or expired")
 	ErrInvitationNotFound = errors.New("invitation not found")
 	ErrInvitationRedeemed = errors.New("invitation already redeemed")
+	ErrInvitationExpired  = errors.New("invitation expired")
 	ErrMemberNotFound     = errors.New("member not found")
 	ErrCannotRemoveHost   = errors.New("the host cannot be removed from their own event")
 )

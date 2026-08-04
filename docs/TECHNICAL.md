@@ -51,7 +51,7 @@ Defined in `postgres/srcs/schema.sql`. Core tables:
 - `sessions` — opaque bearer tokens with a 30-day sliding expiry. Every authenticated request extends the session.
 - `events` — top-level awards events. Has a `host_id`, `visibility` (`public` | `invite-only`), `is_active` flag, and `require_full_ballot` flag.
 - `event_members` — join table tracking which users have joined which events. Required before voting.
-- `invitations` — per-event invite tokens, issued by the host and redeemed by a user to join an invite-only event.
+- `invitations` — per-event invite tokens, issued by the host and redeemed by a user to join an invite-only event. Optional `expires_at` (NULL = never expires); expired tokens are rejected at redemption.
 - `categories` — sub-votes inside an event (e.g. *Game of the Year*).
 - `options` — candidates inside a category.
 - `votes` — one row per cast vote. `UNIQUE(category_id, user_id)` enforces the one-vote-per-category rule at the DB level.
@@ -74,7 +74,7 @@ Routed in `backend/srcs/routes.go`:
 | `DELETE` | `/events/{id}` | ✓ host | Delete event |
 | `POST` | `/events/{id}/close` | ✓ host | Close event |
 | `POST` | `/events/{id}/join` | ✓ | Join a public event |
-| `POST` | `/events/{id}/invitations` | ✓ host | Create invite token |
+| `POST` | `/events/{id}/invitations` | ✓ host | Create invite token; optional body `{"expires_in_hours": 1–8760}` |
 | `GET` | `/events/{id}/invitations` | ✓ host | List invitations (outstanding + redeemed) |
 | `DELETE` | `/events/{id}/invitations/{token}` | ✓ host | Revoke an unredeemed invitation |
 | `GET` | `/events/{id}/members` | ✓ host | List members (host first, then join order) |

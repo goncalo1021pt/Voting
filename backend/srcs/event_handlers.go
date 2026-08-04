@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GetEventsHandler lists all public events and user's events
@@ -112,6 +113,31 @@ func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(event)
 }
 
+// maxInvitationTTLHours caps invitation expiry at one year.
+const maxInvitationTTLHours = 8760
+
+// parseInvitationExpiry reads the optional CreateInvitation request body and
+// returns the requested time-to-live in hours, or nil when the body is empty
+// or omits expires_in_hours (meaning the invitation never expires).
+func parseInvitationExpiry(body io.Reader) (*int, error) {
+	var req struct {
+		ExpiresInHours *int `json:"expires_in_hours"`
+	}
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil // no body: no expiry
+		}
+		return nil, fmt.Errorf("invalid request body")
+	}
+	if req.ExpiresInHours == nil {
+		return nil, nil
+	}
+	if *req.ExpiresInHours < 1 || *req.ExpiresInHours > maxInvitationTTLHours {
+		return nil, fmt.Errorf("expires_in_hours must be between 1 and %d", maxInvitationTTLHours)
+	}
+	return req.ExpiresInHours, nil
+}
+
 // CreateInvitationHandler creates an invitation to an event
 func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := GetUserFromToken(r)
@@ -141,11 +167,22 @@ func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ttlHours, err := parseInvitationExpiry(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var expiresAt *time.Time
+	if ttlHours != nil {
+		t := time.Now().Add(time.Duration(*ttlHours) * time.Hour)
+		expiresAt = &t
+	}
+
 	// Generate token
 	token := generateInvitationToken()
 
 	// Create invitation
-	invitation, err := CreateInvitationInDB(eventID, userID, token)
+	invitation, err := CreateInvitationInDB(eventID, userID, token, expiresAt)
 	if err != nil {
 		http.Error(w, "Failed to create invitation", http.StatusInternalServerError)
 		return
@@ -340,7 +377,16 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	// Redeem invitation
 	eventID, err := RedeemInvitationInDB(token, userID)
 	if err != nil {
-		http.Error(w, "Invalid or already redeemed invitation", http.StatusBadRequest)
+		switch {
+		case errors.Is(err, ErrInvitationNotFound):
+			http.Error(w, "Invalid invitation", http.StatusNotFound)
+		case errors.Is(err, ErrInvitationRedeemed):
+			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
+		case errors.Is(err, ErrInvitationExpired):
+			http.Error(w, "Invitation has expired", http.StatusGone)
+		default:
+			http.Error(w, "Failed to redeem invitation", http.StatusInternalServerError)
+		}
 		return
 	}
 
