@@ -14,6 +14,31 @@ import (
 // Docker force-kills after 10s (default stop_grace_period), so stay under it.
 const shutdownGrace = 8 * time.Second
 
+// startSessionSweeper deletes expired sessions immediately and then every
+// interval, until ctx is cancelled.
+func startSessionSweeper(ctx context.Context, interval time.Duration) {
+	sweep := func() {
+		if n, err := DeleteExpiredSessionsFromDB(); err != nil {
+			log.Printf("Session sweep failed: %v", err)
+		} else if n > 0 {
+			log.Printf("Session sweep: removed %d expired session(s)", n)
+		}
+	}
+	go func() {
+		sweep()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				sweep()
+			}
+		}
+	}()
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("%v", err)
@@ -53,6 +78,10 @@ func run() error {
 	// in-flight requests instead of killing them mid-write.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Expired sessions are unusable but were never deleted — sweep them at
+	// startup and then hourly so the table stops growing forever.
+	startSessionSweeper(ctx, time.Hour)
 
 	errCh := make(chan error, 1)
 	go func() {
