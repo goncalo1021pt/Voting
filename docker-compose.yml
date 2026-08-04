@@ -6,6 +6,7 @@ services:
       context: ./postgres
       dockerfile: Dockerfile
     container_name: events-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -28,6 +29,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: events-backend
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
