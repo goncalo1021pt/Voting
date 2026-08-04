@@ -82,6 +82,24 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(event)
 }
 
+// redactEventForViewer strips members-only content from an invite-only event
+// when the viewer is neither the host nor a member. The remaining shell is
+// exactly what the frontend needs to render its access wall — name and state,
+// but no description, ballot, or participation numbers.
+func redactEventForViewer(event *Event, viewerID int) *Event {
+	if event.Visibility != "invite-only" || viewerID == event.HostID || event.IsMember {
+		return event
+	}
+	return &Event{
+		ID:         event.ID,
+		HostID:     event.HostID,
+		Name:       event.Name,
+		Visibility: event.Visibility,
+		IsActive:   event.IsActive,
+		CreatedAt:  event.CreatedAt,
+	}
+}
+
 // GetEventHandler retrieves a specific event
 func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -100,7 +118,9 @@ func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich with caller-specific membership and vote data.
+	viewerID := 0
 	if userID, err := GetUserFromToken(r); err == nil && userID > 0 {
+		viewerID = userID
 		if isMember, err := IsEventMemberFromDB(eventID, userID); err == nil {
 			event.IsMember = isMember
 		}
@@ -110,7 +130,7 @@ func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(event)
+	json.NewEncoder(w).Encode(redactEventForViewer(event, viewerID))
 }
 
 // maxInvitationTTLHours caps invitation expiry at one year.
