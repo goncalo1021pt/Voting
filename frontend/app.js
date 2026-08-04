@@ -1155,14 +1155,18 @@ async function viewEvent({ eventId }) {
     const unvotedCategories = categories.filter((c) => myVotes[c.id] == null);
     const showResultsLink = !event.is_active || event.results_visibility === "live" || isHost;
 
+    // Non-members of an invite-only event get a redacted payload from the API
+    // (no description, categories, or counts) — skip the tags those feed.
+    const walled = event.visibility === "invite-only" && !event.is_member && !isHost;
+
     const memberCount = event.member_count || 0;
     const voterCount = event.voter_count || 0;
     const tags = [
         el("span", { class: "tag " + (event.visibility === "public" ? "subtle" : "accent") }, event.visibility),
-        el("span", { class: "tag subtle" }, event.results_visibility === "live" ? "live results" : "results after close"),
+        !walled ? el("span", { class: "tag subtle" }, event.results_visibility === "live" ? "live results" : "results after close") : null,
         el("span", { class: event.is_active ? "tag success" : "tag danger" }, event.is_active ? "open" : "closed"),
-        el("span", { class: "tag subtle" }, `${memberCount} member${memberCount === 1 ? "" : "s"}`),
-        el("span", { class: "tag subtle" }, `${voterCount} of ${memberCount} voted`),
+        !walled ? el("span", { class: "tag subtle" }, `${memberCount} member${memberCount === 1 ? "" : "s"}`) : null,
+        !walled ? el("span", { class: "tag subtle" }, `${voterCount} of ${memberCount} voted`) : null,
         isHost ? el("span", { class: "tag accent" }, "you host") : null,
         event.require_full_ballot ? el("span", { class: "tag subtle" }, "full ballot required") : null,
     ];
@@ -1219,13 +1223,10 @@ async function viewEvent({ eventId }) {
     // host still wants to see who took part.
     const membersCard = isHost ? buildMembersCard(event.id) : null;
 
-    if (categories.length === 0) {
-        render(headerCard, invitationsCard, membersCard, el("p", { class: "muted" }, "No categories."));
-        return;
-    }
-
-    // Non-member trying to view an invite-only event — show a wall instead of categories.
-    if (!event.is_member && event.visibility === "invite-only") {
+    // Non-member trying to view an invite-only event — show a wall instead of
+    // categories. Must come before the empty-categories check: the redacted
+    // payload has no categories, and this is the reason why.
+    if (walled) {
         render(
             headerCard,
             el("div", { class: "card" }, [
@@ -1236,6 +1237,11 @@ async function viewEvent({ eventId }) {
                 ]),
             ]),
         );
+        return;
+    }
+
+    if (categories.length === 0) {
+        render(headerCard, invitationsCard, membersCard, el("p", { class: "muted" }, "No categories."));
         return;
     }
 
