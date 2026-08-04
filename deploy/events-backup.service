@@ -6,5 +6,5 @@ After=docker.service
 [Service]
 Type=oneshot
 # Set this to the repo checkout on the VM before installing:
-WorkingDirectory=/home/goncalo/Voting
+WorkingDirectory=/home/goncalo/events
 ExecStart=/bin/sh deploy/backup.sh
