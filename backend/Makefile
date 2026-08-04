@@ -8,10 +8,10 @@ build: lint
 # Run linter and checks
 lint:
 	go mod tidy
-	go vet ./srcs 2>/dev/null || true
+	go vet ./srcs
 	@echo "✅ Code checked"
 
-# Run tests (when we add them)
+# Run tests
 test:
 	go test -v ./srcs
 
