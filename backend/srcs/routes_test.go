@@ -90,3 +90,48 @@ func TestAssetVersionChangesWithContent(t *testing.T) {
 		t.Errorf("version should change when content changes")
 	}
 }
+
+func TestIsExactEventPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/events/5", true},
+		{"/events/123", true},
+		{"/events/abc", true}, // shape only; the handler's Atoi rejects it
+		{"/events/", false},
+		{"/events/5/members", false},
+		{"/events/5/members/3", false},
+		{"/events/5/invitations/tok", false},
+		{"/events/5/anything", false},
+	}
+	for _, tt := range tests {
+		if got := isExactEventPath(tt.path); got != tt.want {
+			t.Errorf("isExactEventPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+// A DELETE with trailing segments must never reach DeleteEventHandler. Routed
+// destructive paths respond 401 without a token; anything that falls through
+// to the default arm responds 404 — which is how we tell them apart with no DB.
+func TestDeleteEventRouteRejectsSubpaths(t *testing.T) {
+	tests := []struct {
+		path       string
+		wantStatus int
+	}{
+		{"/events/5", 401},                  // exact shape: routed, auth rejects
+		{"/events/5/members", 404},          // malformed member removal: not routed
+		{"/events/5/typo", 404},             // garbage subpath: not routed
+		{"/events/5/members/3", 401},        // real member-removal route still matches
+		{"/events/5/invitations/tok", 401},  // real invitation-revoke route still matches
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest("DELETE", tt.path, nil)
+		rec := httptest.NewRecorder()
+		RouteHandler(rec, req)
+		if rec.Code != tt.wantStatus {
+			t.Errorf("DELETE %s = %d, want %d", tt.path, rec.Code, tt.wantStatus)
+		}
+	}
+}

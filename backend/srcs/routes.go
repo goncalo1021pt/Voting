@@ -78,6 +78,15 @@ func serveFrontend(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, full)
 }
 
+// isExactEventPath reports whether path is exactly /events/{id} with no
+// further segments. The destructive event routes must not match subpaths:
+// a malformed DELETE /events/5/members would otherwise fall through to
+// DeleteEventHandler, which only reads the id segment — and delete event 5.
+func isExactEventPath(path string) bool {
+	rest := strings.TrimPrefix(path, "/events/")
+	return rest != "" && !strings.Contains(rest, "/")
+}
+
 // RouteHandler handles all incoming requests
 func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -112,7 +121,7 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(JoinEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/close") && r.Method == "POST":
 		RequireAuth(CloseEventHandler)(w, r)
-	case strings.HasPrefix(path, "/events/") && r.Method == "DELETE":
+	case isExactEventPath(path) && r.Method == "DELETE":
 		RequireAuth(DeleteEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":
 		GetEventHandler(w, r)
