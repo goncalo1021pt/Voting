@@ -95,6 +95,22 @@ func DeleteSessionInDB(token string) error {
 	return nil
 }
 
+// DeleteExpiredSessionsFromDB removes sessions past their expiry and returns
+// how many were deleted. Expired rows are already unusable —
+// VerifyAndSlideSessionInDB checks expires_at — this just stops the table
+// growing forever.
+func DeleteExpiredSessionsFromDB() (int64, error) {
+	res, err := db.Exec("DELETE FROM sessions WHERE expires_at < now()")
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete expired sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count deleted sessions: %w", err)
+	}
+	return n, nil
+}
+
 // GetUserByIDFromDB retrieves a user by ID
 func GetUserByIDFromDB(userID int) (*User, error) {
 	var username string
