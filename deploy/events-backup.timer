@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Events database backup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# Run at next boot if the VM was off at 04:30.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

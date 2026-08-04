@@ -165,12 +165,29 @@ sudo systemctl status cloudflared       # tunnel health
 ### Database backup / restore
 Postgres data lives in the named volume `events_postgres_data`.
 
+Manual:
+
 ```bash
-# backup
-docker compose exec -T postgres pg_dump -U events_user events_db > backup_$(date +%F).sql
+make backup   # writes backups/events_<timestamp>.sql
 # restore (into a running db)
-cat backup_YYYY-MM-DD.sql | docker compose exec -T postgres psql -U events_user -d events_db
+cat backups/events_<timestamp>.sql | docker compose exec -T postgres psql -U events_user -d events_db
 ```
+
+Automated nightly backups — a systemd timer runs `deploy/backup.sh`, which
+gzips a dump into `backups/` and keeps the newest 14:
+
+```bash
+sudo cp deploy/events-backup.service deploy/events-backup.timer /etc/systemd/system/
+sudoedit /etc/systemd/system/events-backup.service   # set WorkingDirectory to this repo's path
+sudo systemctl daemon-reload
+sudo systemctl enable --now events-backup.timer
+sudo systemctl start events-backup.service           # run one now to test
+systemctl list-timers events-backup.timer            # confirm the schedule
+```
+
+Backups on the same disk don't survive the disk. Copy `backups/` offsite —
+e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
+— before relying on them, and test a restore once.
 
 ---
 
@@ -178,10 +195,10 @@ cat backup_YYYY-MM-DD.sql | docker compose exec -T postgres psql -U events_user 
 
 - **No inbound ports** are opened on the router — exposure is entirely via the
   Cloudflare Tunnel (outbound). Management is LAN-only / over SSH.
-- `docker-compose.yml` currently publishes Postgres `5432` on the VM's LAN
-  interface. It is **not** internet-exposed (only `:8080` is tunnelled), but for
-  defense-in-depth you can drop the `ports:` mapping on the `postgres` service so the
-  DB is reachable only on the internal Compose network.
+- Postgres has **no host port mapping** — it is reachable only on the internal
+  Compose network. The backend's `8080` *is* published on the VM's LAN
+  interface; binding it to `127.0.0.1` so only the tunnel can reach it is
+  tracked in issue #38.
 - Keep `.env` out of git (it holds `DB_PASSWORD`); it's already in `.gitignore`.
 - The VM's cloud-init console password should be changed from its initial value
   (`passwd` on the VM); SSH-key login is the primary access path.

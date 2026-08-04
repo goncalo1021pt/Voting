@@ -1,0 +1,10 @@
+[Unit]
+Description=Events database backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# Set this to the repo checkout on the VM before installing:
+WorkingDirectory=/home/goncalo/Voting
+ExecStart=/bin/sh deploy/backup.sh
