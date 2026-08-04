@@ -37,7 +37,8 @@ type EventMember struct {
 	IsHost   bool      `json:"is_host"`
 }
 
-// Invitation represents an invite to an event
+// Invitation represents an invite to an event. A nil ExpiresAt means the
+// invitation never expires.
 type Invitation struct {
 	ID                 int        `json:"id"`
 	EventID            int        `json:"event_id"`
@@ -46,6 +47,7 @@ type Invitation struct {
 	RedeemedBy         *int       `json:"redeemed_by,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	RedeemedAt         *time.Time `json:"redeemed_at,omitempty"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	RedeemedByUsername *string    `json:"redeemed_by_username,omitempty"`
 }
 

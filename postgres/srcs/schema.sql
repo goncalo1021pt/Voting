@@ -38,6 +38,7 @@ CREATE TABLE event_members (
 );
 
 -- Invitations table (event-specific invites)
+-- expires_at NULL means the invitation never expires.
 CREATE TABLE invitations (
     id SERIAL PRIMARY KEY,
     event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -45,7 +46,8 @@ CREATE TABLE invitations (
     invited_by INT NOT NULL REFERENCES users(id),
     redeemed_by INT REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    redeemed_at TIMESTAMP
+    redeemed_at TIMESTAMP,
+    expires_at TIMESTAMP
 );
 
 -- Categories table (subcategories within an event, e.g., "Personality of the Year")

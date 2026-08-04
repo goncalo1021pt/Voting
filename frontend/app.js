@@ -85,7 +85,7 @@ const API = {
     createEvent: (body) => api("POST", "/events", body),
     closeEvent: (id) => api("POST", `/events/${id}/close`),
     joinEvent: (id) => api("POST", `/events/${id}/join`),
-    createInvitation: (eventId) => api("POST", `/events/${eventId}/invitations`),
+    createInvitation: (eventId, body) => api("POST", `/events/${eventId}/invitations`, body),
     listInvitations: (eventId) => api("GET", `/events/${eventId}/invitations`),
     revokeInvitation: (eventId, token) => api("DELETE", `/events/${eventId}/invitations/${token}`),
     redeemInvitation: (token) => api("POST", `/invitations/${token}`),
@@ -957,6 +957,18 @@ async function viewCreateEvent() {
 
 // ---------- Event detail ----------
 
+// Coarse "time until" for invitation expiry — days beyond 48h, hours beyond
+// 90 min, minutes below that. Returns null when the moment has passed.
+function formatTimeLeft(iso) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (Number.isNaN(ms) || ms <= 0) return null;
+    const minutes = Math.round(ms / 60000);
+    if (minutes < 90) return `${Math.max(minutes, 1)} min`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours} hours`;
+    return `${Math.round(hours / 24)} days`;
+}
+
 // Build the host-only "Invitations" card. Self-fetches the invitation list,
 // re-renders on create/revoke. Returns a DOM section node.
 function buildInvitationsCard(eventId) {
@@ -975,13 +987,23 @@ function buildInvitationsCard(eventId) {
         }
         invites.forEach((inv) => {
             const isRedeemed = inv.redeemed_by != null;
+            const timeLeft = inv.expires_at ? formatTimeLeft(inv.expires_at) : null;
+            const isExpired = !isRedeemed && inv.expires_at && timeLeft === null;
             const link = `${location.origin}/#/invitations/${inv.token}`;
-            const statusTag = isRedeemed
-                ? el("span", { class: "tag subtle" }, `redeemed by @${inv.redeemed_by_username || "unknown"}`)
-                : el("span", { class: "tag success" }, "outstanding");
+            let statusTag;
+            if (isRedeemed) {
+                statusTag = el("span", { class: "tag subtle" }, `redeemed by @${inv.redeemed_by_username || "unknown"}`);
+            } else if (isExpired) {
+                statusTag = el("span", { class: "tag danger" }, "expired");
+            } else {
+                statusTag = el("span", { class: "tag success" }, "outstanding");
+            }
+            const expiryTag = !isRedeemed && !isExpired && timeLeft
+                ? el("span", { class: "tag subtle" }, `expires in ${timeLeft}`)
+                : null;
 
             const actions = el("div", { class: "button-row" }, [
-                !isRedeemed ? el("button", {
+                !isRedeemed && !isExpired ? el("button", {
                     class: "secondary",
                     onClick: async () => {
                         try {
@@ -1018,6 +1040,7 @@ function buildInvitationsCard(eventId) {
                 el("div", { class: "invitation-row-main" }, [
                     el("code", { class: "invitation-token" }, shortToken(inv.token)),
                     statusTag,
+                    expiryTag,
                 ]),
                 actions,
             ]);
@@ -1035,11 +1058,20 @@ function buildInvitationsCard(eventId) {
         }
     }
 
+    const expirySelect = el("select", { "aria-label": "Invitation expiry" }, [
+        el("option", { value: "" }, "No expiry"),
+        el("option", { value: "1" }, "Expires in 1 hour"),
+        el("option", { value: "24" }, "Expires in 24 hours"),
+        el("option", { value: "72" }, "Expires in 3 days"),
+        el("option", { value: "168" }, "Expires in 7 days"),
+    ]);
+
     const createBtn = el("button", {
         class: "secondary",
         onClick: async () => {
             try {
-                const inv = await API.createInvitation(eventId);
+                const hours = parseInt(expirySelect.value, 10);
+                const inv = await API.createInvitation(eventId, hours ? { expires_in_hours: hours } : undefined);
                 const link = `${location.origin}/#/invitations/${inv.token}`;
                 try { await navigator.clipboard.writeText(link); } catch {}
                 toast(`Invite link copied: ${link}`, "success");
@@ -1056,7 +1088,7 @@ function buildInvitationsCard(eventId) {
                 el("p", { class: "eyebrow" }, "Invitations"),
                 el("h2", { style: "margin:0;" }, "Invite people"),
             ]),
-            createBtn,
+            el("div", { class: "button-row" }, [expirySelect, createBtn]),
         ]),
         listMount,
     ]);

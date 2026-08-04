@@ -288,14 +288,15 @@ func IsEventHostFromDB(eventID, userID int) (bool, error) {
 	return hostID == userID, nil
 }
 
-// CreateInvitationInDB creates a new invitation
-func CreateInvitationInDB(eventID, invitedBy int, token string) (*Invitation, error) {
+// CreateInvitationInDB creates a new invitation. A nil expiresAt stores an
+// invitation that never expires.
+func CreateInvitationInDB(eventID, invitedBy int, token string, expiresAt *time.Time) (*Invitation, error) {
 	var invitationID int
 	var createdAt time.Time
 
 	err := db.QueryRow(
-		"INSERT INTO invitations (event_id, invited_by, token) VALUES ($1, $2, $3) RETURNING id, created_at",
-		eventID, invitedBy, token,
+		"INSERT INTO invitations (event_id, invited_by, token, expires_at) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
+		eventID, invitedBy, token, expiresAt,
 	).Scan(&invitationID, &createdAt)
 
 	if err != nil {
@@ -308,6 +309,7 @@ func CreateInvitationInDB(eventID, invitedBy int, token string) (*Invitation, er
 		Token:     token,
 		InvitedBy: invitedBy,
 		CreatedAt: createdAt,
+		ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -315,7 +317,7 @@ func CreateInvitationInDB(eventID, invitedBy int, token string) (*Invitation, er
 // the redeemer's username joined in when redeemed.
 func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
 	rows, err := db.Query(`
-		SELECT i.id, i.event_id, i.token, i.invited_by, i.redeemed_by, i.created_at, i.redeemed_at, u.username
+		SELECT i.id, i.event_id, i.token, i.invited_by, i.redeemed_by, i.created_at, i.redeemed_at, i.expires_at, u.username
 		FROM invitations i
 		LEFT JOIN users u ON u.id = i.redeemed_by
 		WHERE i.event_id = $1
@@ -331,8 +333,9 @@ func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
 		var inv Invitation
 		var redeemedBy sql.NullInt64
 		var redeemedAt sql.NullTime
+		var expiresAt sql.NullTime
 		var username sql.NullString
-		if err := rows.Scan(&inv.ID, &inv.EventID, &inv.Token, &inv.InvitedBy, &redeemedBy, &inv.CreatedAt, &redeemedAt, &username); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.EventID, &inv.Token, &inv.InvitedBy, &redeemedBy, &inv.CreatedAt, &redeemedAt, &expiresAt, &username); err != nil {
 			return nil, fmt.Errorf("failed to scan invitation row: %w", err)
 		}
 		if redeemedBy.Valid {
@@ -342,6 +345,10 @@ func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
 		if redeemedAt.Valid {
 			t := redeemedAt.Time
 			inv.RedeemedAt = &t
+		}
+		if expiresAt.Valid {
+			t := expiresAt.Time
+			inv.ExpiresAt = &t
 		}
 		if username.Valid {
 			s := username.String
@@ -390,18 +397,27 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 
 	var eventID int
 	var redeemedBy *int
+	var expired bool
 
+	// The expiry comparison runs in SQL so it uses the same clock that stamped
+	// expires_at at creation time.
 	err = tx.QueryRow(
-		"SELECT event_id, redeemed_by FROM invitations WHERE token = $1",
+		"SELECT event_id, redeemed_by, (expires_at IS NOT NULL AND expires_at < NOW()) FROM invitations WHERE token = $1",
 		token,
-	).Scan(&eventID, &redeemedBy)
+	).Scan(&eventID, &redeemedBy, &expired)
 
+	if err == sql.ErrNoRows {
+		return 0, ErrInvitationNotFound
+	}
 	if err != nil {
-		return 0, fmt.Errorf("invitation not found: %w", err)
+		return 0, fmt.Errorf("failed to look up invitation: %w", err)
 	}
 
 	if redeemedBy != nil {
-		return 0, fmt.Errorf("invitation already redeemed")
+		return 0, ErrInvitationRedeemed
+	}
+	if expired {
+		return 0, ErrInvitationExpired
 	}
 
 	// Update invitation
