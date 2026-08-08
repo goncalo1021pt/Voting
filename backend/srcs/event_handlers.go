@@ -27,7 +27,7 @@ func GetEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	events, err := GetEventsFromDB(userID)
 	if err != nil {
-		http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch events", err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 	// Create event
 	event, err := CreateEventInDB(userID, req.Name, req.Description, req.Visibility, req.ResultsVisibility, req.RequireFullBallot, req.Categories)
 	if err != nil {
-		http.Error(w, "Failed to create event", http.StatusInternalServerError)
+		serverError(w, r, "Failed to create event", err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	// Create invitation
 	invitation, err := CreateInvitationInDB(eventID, userID, token, expiresAt)
 	if err != nil {
-		http.Error(w, "Failed to create invitation", http.StatusInternalServerError)
+		serverError(w, r, "Failed to create invitation", err)
 		return
 	}
 
@@ -241,7 +241,7 @@ func ListInvitationsHandler(w http.ResponseWriter, r *http.Request) {
 
 	invitations, err := ListInvitationsForEventFromDB(eventID)
 	if err != nil {
-		http.Error(w, "Failed to fetch invitations", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch invitations", err)
 		return
 	}
 
@@ -287,7 +287,7 @@ func RevokeInvitationHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvitationRedeemed):
 			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
 		default:
-			http.Error(w, "Failed to revoke invitation", http.StatusInternalServerError)
+			serverError(w, r, "Failed to revoke invitation", err)
 		}
 		return
 	}
@@ -324,7 +324,7 @@ func ListMembersHandler(w http.ResponseWriter, r *http.Request) {
 
 	members, err := ListMembersForEventFromDB(eventID)
 	if err != nil {
-		http.Error(w, "Failed to fetch members", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch members", err)
 		return
 	}
 
@@ -373,7 +373,7 @@ func RemoveMemberHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrCannotRemoveHost):
 			http.Error(w, "The host cannot be removed from their own event", http.StatusConflict)
 		default:
-			http.Error(w, "Failed to remove member", http.StatusInternalServerError)
+			serverError(w, r, "Failed to remove member", err)
 		}
 		return
 	}
@@ -405,7 +405,7 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInvitationExpired):
 			http.Error(w, "Invitation has expired", http.StatusGone)
 		default:
-			http.Error(w, "Failed to redeem invitation", http.StatusInternalServerError)
+			serverError(w, r, "Failed to redeem invitation", err)
 		}
 		return
 	}
@@ -425,7 +425,7 @@ func authorizeResultsView(w http.ResponseWriter, r *http.Request, eventID int) b
 			http.Error(w, "Event not found", http.StatusNotFound)
 			return false
 		}
-		http.Error(w, "Failed to fetch event", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch event", err)
 		return false
 	}
 
@@ -444,7 +444,7 @@ func authorizeResultsView(w http.ResponseWriter, r *http.Request, eventID int) b
 		}
 		isMember, mErr := IsEventMemberFromDB(eventID, viewerID)
 		if mErr != nil {
-			http.Error(w, "Failed to verify membership", http.StatusInternalServerError)
+			serverError(w, r, "Failed to verify membership", mErr)
 			return false
 		}
 		if !isMember {
@@ -480,7 +480,7 @@ func GetEventResultsHandler(w http.ResponseWriter, r *http.Request) {
 
 	results, err := GetEventResultsFromDB(eventID, categoryID)
 	if err != nil {
-		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch results", err)
 		return
 	}
 
@@ -512,7 +512,7 @@ func GetAllEventResultsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Event not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+		serverError(w, r, "Failed to fetch results", err)
 		return
 	}
 
@@ -554,7 +554,7 @@ func RecordVoteHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrOptionNotFound):
 			http.Error(w, "Option not found", http.StatusNotFound)
 		default:
-			http.Error(w, "Failed to record vote", http.StatusInternalServerError)
+			serverError(w, r, "Failed to record vote", err)
 		}
 		return
 	}
@@ -644,7 +644,7 @@ func JoinEventHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrEventClosed):
 			http.Error(w, "Event is closed", http.StatusGone)
 		default:
-			http.Error(w, "Failed to join event", http.StatusInternalServerError)
+			serverError(w, r, "Failed to join event", err)
 		}
 		return
 	}
@@ -679,7 +679,7 @@ func DeleteEventHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrNotHost):
 			http.Error(w, "Only the host can delete this event", http.StatusForbidden)
 		default:
-			http.Error(w, "Failed to delete event", http.StatusInternalServerError)
+			serverError(w, r, "Failed to delete event", err)
 		}
 		return
 	}
@@ -715,7 +715,7 @@ func CloseEventHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrNotHost):
 			http.Error(w, "Only the host can close this event", http.StatusForbidden)
 		default:
-			http.Error(w, "Failed to close event", http.StatusInternalServerError)
+			serverError(w, r, "Failed to close event", err)
 		}
 		return
 	}

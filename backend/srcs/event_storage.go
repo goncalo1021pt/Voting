@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -184,9 +185,13 @@ func GetEventFromDB(eventID int) (*Event, error) {
 	}
 	defer rows.Close()
 
+	// Skipping a row silently would serve a partial event as if it were whole.
+	// Dropping it is still wrong — issue #48 tracks propagating these — but at
+	// least the operator can now see that it happened.
 	for rows.Next() {
 		var category Category
 		if err := rows.Scan(&category.ID, &category.EventID, &category.Name, &category.Description); err != nil {
+			log.Printf("WARN event %d: skipping category row: %v", eventID, err)
 			continue
 		}
 
@@ -196,12 +201,14 @@ func GetEventFromDB(eventID int) (*Event, error) {
 			category.ID,
 		)
 		if err != nil {
+			log.Printf("WARN event %d: skipping options for category %d: %v", eventID, category.ID, err)
 			continue
 		}
 
 		for optRows.Next() {
 			var option Option
 			if err := optRows.Scan(&option.ID, &option.CategoryID, &option.Name); err != nil {
+				log.Printf("WARN event %d: skipping option row in category %d: %v", eventID, category.ID, err)
 				continue
 			}
 			category.Options = append(category.Options, option)
@@ -479,10 +486,13 @@ func GetEventResultsFromDB(eventID, categoryID int) (*ResultsResponse, error) {
 	var results []Result
 	var totalVotes int
 
+	// A dropped row here understates a tally, which is worse than it sounds for
+	// a voting app — log it loudly. Propagating the error is issue #48.
 	for rows.Next() {
 		var result Result
 		var voteCount int
 		if err := rows.Scan(&result.OptionID, &result.OptionName, &voteCount); err != nil {
+			log.Printf("WARN category %d: skipping result row, tally may be understated: %v", categoryID, err)
 			continue
 		}
 		result.Votes = voteCount
