@@ -104,7 +104,7 @@ make logs              # tail logs from all services
 make clean             # stop containers and wipe volumes (resets DB)
 ```
 
-Backend listens on `:8080`, Postgres on `:5432`. The frontend is reachable at `http://localhost:8080/`.
+Backend listens on `:8080`, Postgres on `:5432`. The frontend is reachable at `http://localhost:8080/`. Compose publishes the backend on `127.0.0.1` only — in production `cloudflared` runs on the same host and is the sole ingress.
 
 ## Design notes & conventions
 
@@ -112,6 +112,7 @@ Backend listens on `:8080`, Postgres on `:5432`. The frontend is reachable at `h
 - **Storage layer is plain `database/sql`** — no ORM. Queries live in `*_storage.go` files.
 - **DB enforces invariants** — uniqueness (one vote per category per user, unique invite tokens, unique event membership) is enforced in SQL. Handlers rely on the DB to reject duplicates.
 - **Session sliding** — every authenticated request extends the session TTL by 30 days via an `UPDATE … RETURNING` pattern.
+- **Client IP** — `clientIP` believes `CF-Connecting-IP` only when the peer is in `TRUSTED_PROXY_CIDRS` (default: loopback + Docker bridge), and only when the value parses as an IP. It keys the auth rate limiter, so an untrusted caller able to set it freely would get a fresh bucket per request.
 - **Logging** — `LogMiddleware` writes one access line per request and tags it with a short random request ID, echoed to the client as `X-Request-Id`. Every 500 goes through `serverError`, which logs the underlying cause under the same ID and sends only the generic message to the client. Invitation tokens are redacted out of logged paths (they're credentials); query strings are never logged.
 - **Schema changes** — managed by [goose](https://github.com/pressly/goose). Migrations live in `backend/srcs/migrations/`, are embedded in the binary, and run automatically at startup before the server accepts traffic. See *Database migrations* in `DEPLOYMENT.md` for how to add one.
 - **Frontend** — single-page app using the browser's hash for routing. No bundler; the three files are served as-is by the Go backend.

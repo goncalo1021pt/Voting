@@ -296,9 +296,20 @@ e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
 - **No inbound ports** are opened on the router — exposure is entirely via the
   Cloudflare Tunnel (outbound). Management is LAN-only / over SSH.
 - Postgres has **no host port mapping** — it is reachable only on the internal
-  Compose network. The backend's `8080` *is* published on the VM's LAN
-  interface; binding it to `127.0.0.1` so only the tunnel can reach it is
-  tracked in issue #38.
+  Compose network. The backend publishes on **`127.0.0.1:8080`**, so only
+  processes on the VM (i.e. `cloudflared`) can reach it; the LAN cannot bypass
+  Cloudflare's TLS, WAF and rate rules by talking to it directly.
+- **`CF-Connecting-IP` is only believed from a trusted peer.** It decides the
+  rate-limit bucket and what lands in the access log, so a caller who could
+  set it freely could present a new IP per request and make the auth limiter
+  useless. Trusted peers default to loopback plus the Docker bridge ranges
+  (`127.0.0.0/8,::1/128,172.16.0.0/12`) — where cloudflared's traffic arrives
+  from — and anything else falls back to the real socket address. Override
+  with `TRUSTED_PROXY_CIDRS` if the topology changes; an unparseable value
+  fails the boot rather than quietly changing who is trusted.
+
+  > If you ever republish the backend beyond loopback, revisit this list first.
+  > Trusting a range you don't control hands out rate-limit immunity.
 - Keep `.env` out of git (it holds `DB_PASSWORD`); it's already in `.gitignore`.
 - The VM's cloud-init console password should be changed from its initial value
   (`passwd` on the VM); SSH-key login is the primary access path.

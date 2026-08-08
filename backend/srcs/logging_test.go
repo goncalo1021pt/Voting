@@ -34,7 +34,12 @@ func TestLogMiddlewareRecordsRequest(t *testing.T) {
 		w.Write([]byte("hello"))
 	}))
 
+	// The forwarded IP is only logged when the peer is a trusted proxy, so
+	// pose as the tunnel rather than an arbitrary client.
+	withTrustedProxies(t, "172.16.0.0/12")
+
 	req := httptest.NewRequest("GET", "/events", nil)
+	req.RemoteAddr = "172.20.0.1:5000"
 	req.Header.Set("CF-Connecting-IP", "203.0.113.7")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

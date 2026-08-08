@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -69,16 +72,77 @@ func (rl *rateLimiter) allow(key string, now time.Time) bool {
 // authLimiter throttles login/register: 10 attempts per IP per 5 minutes.
 var authLimiter = newRateLimiter(10, 5*time.Minute)
 
-// clientIP resolves the caller's address. Because the app is only reachable
-// through the Cloudflare Tunnel (no open inbound ports), CF-Connecting-IP can
-// be trusted when present; otherwise fall back to the socket address.
-func clientIP(r *http.Request) string {
-	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-		return ip
+// defaultTrustedProxyCIDRs covers loopback and the Docker bridge ranges — the
+// only paths by which cloudflared, which runs on the host, reaches the
+// container. Everything else, the LAN included, is untrusted: a request
+// arriving straight from the LAN did not come through Cloudflare, so its
+// CF-Connecting-IP is a claim rather than a fact.
+const defaultTrustedProxyCIDRs = "127.0.0.0/8,::1/128,172.16.0.0/12"
+
+// trustedProxies is the parsed form of TRUSTED_PROXY_CIDRS, set by
+// InitTrustedProxies at startup.
+var trustedProxies []*net.IPNet
+
+// InitTrustedProxies parses the set of peer addresses whose forwarded-IP
+// headers are believed. Override with TRUSTED_PROXY_CIDRS (comma-separated)
+// when the deployment topology differs — in particular, tighten it if the
+// backend port is ever published beyond loopback.
+func InitTrustedProxies() error {
+	spec := os.Getenv("TRUSTED_PROXY_CIDRS")
+	if spec == "" {
+		spec = defaultTrustedProxyCIDRs
 	}
+
+	var nets []*net.IPNet
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(entry)
+		if err != nil {
+			return fmt.Errorf("TRUSTED_PROXY_CIDRS: %q is not a valid CIDR: %w", entry, err)
+		}
+		nets = append(nets, network)
+	}
+
+	trustedProxies = nets
+	return nil
+}
+
+// isTrustedProxy reports whether a connection from host may speak for someone
+// else via CF-Connecting-IP.
+func isTrustedProxy(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, network := range trustedProxies {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP resolves the caller's address, used for rate-limit keying and the
+// access log.
+//
+// CF-Connecting-IP is only honoured when the peer is a trusted proxy. Trusting
+// it unconditionally let anyone who could open a socket to the backend present
+// a fresh IP per request and walk past the auth rate limiter — unlimited
+// credential attempts. The value must also parse as an IP: it reaches the log
+// and the limiter's key space, and neither should hold arbitrary client text.
+func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+
+	if claimed := r.Header.Get("CF-Connecting-IP"); claimed != "" && isTrustedProxy(host) {
+		if ip := net.ParseIP(strings.TrimSpace(claimed)); ip != nil {
+			return ip.String()
+		}
 	}
 	return host
 }
