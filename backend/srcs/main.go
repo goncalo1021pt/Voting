@@ -63,6 +63,12 @@ func run() error {
 	// Fingerprint static assets so redeploys bust the browser cache.
 	InitAssetVersion()
 
+	// Decide whose CF-Connecting-IP header we believe before serving anything;
+	// a bad CIDR list should fail the boot, not silently untrust every peer.
+	if err := InitTrustedProxies(); err != nil {
+		return fmt.Errorf("failed to configure trusted proxies: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RouteHandler)
 
