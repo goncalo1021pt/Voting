@@ -54,6 +54,12 @@ func run() error {
 	}
 	defer CloseDB()
 
+	// Bring the schema up to date before serving. Failing here is deliberate:
+	// a backend running against a stale schema fails in worse, later ways.
+	if err := RunMigrations(context.Background()); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+
 	// Fingerprint static assets so redeploys bust the browser cache.
 	InitAssetVersion()
 

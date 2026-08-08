@@ -1,7 +1,9 @@
 FROM postgres:15-alpine
 
-# Copy the schema initialization script
-COPY srcs/schema.sql /docker-entrypoint-initdb.d/
+# No /docker-entrypoint-initdb.d/ script: the schema lives in
+# backend/srcs/migrations/ and the backend applies it with goose at startup.
+# initdb only ever ran on an empty data directory, so it could not deliver
+# schema changes to a database that already had data (issue #33).
 
 # Non-secret defaults only. POSTGRES_PASSWORD is intentionally NOT defaulted
 # here so a missing DB_PASSWORD fails the build/run instead of silently booting

@@ -152,6 +152,52 @@ docker compose up -d --build  # rebuild + restart with zero config changes
 docker compose logs -f backend
 ```
 
+## Database migrations
+
+The schema is owned by [goose](https://github.com/pressly/goose) migrations in
+`backend/srcs/migrations/`. They are **embedded in the backend binary** and run
+automatically at startup, before the server accepts traffic — so
+`docker compose up -d --build` is the whole migration procedure. If a migration
+fails the backend exits rather than serving against a schema it doesn't expect;
+`docker compose logs backend` has the SQL error.
+
+Nothing special is needed for the existing production database. Migration
+`00001_baseline` is written entirely with `IF NOT EXISTS`, so it no-ops against a
+database that the old `schema.sql` init already populated, and `00002` adds the
+`invitations.expires_at` column that such a database is missing.
+
+**Take a backup before deploying a migration** (`make backup`) — goose has `Down`
+steps, but restoring a dump is the reliable rollback.
+
+Check the applied version:
+
+```bash
+docker compose exec postgres psql -U events_user -d events_db \
+  -c 'SELECT version_id, is_applied, tstamp FROM goose_db_version ORDER BY id DESC LIMIT 5;'
+```
+
+### Adding a migration
+
+Create `backend/srcs/migrations/<NNNNN>_<short_name>.sql`, numbered one above the
+highest existing file:
+
+```sql
+-- +goose Up
+ALTER TABLE events ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
+
+-- +goose Down
+ALTER TABLE events DROP COLUMN IF EXISTS archived_at;
+```
+
+Rules that keep deploys boring:
+
+- **Never edit a migration that has been deployed.** Goose records which
+  versions ran; changing one in place means prod and fresh databases silently
+  diverge. Add a new migration instead.
+- **Prefer additive, backwards-compatible changes** — add nullable columns, then
+  backfill, then tighten. The old binary keeps running during a rebuild.
+- Keep `IF NOT EXISTS` / `IF EXISTS` guards so a re-run is harmless.
+
 ## Operations
 
 ```bash
