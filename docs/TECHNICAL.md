@@ -2,7 +2,7 @@
 
 ## Stack
 
-- **Backend** — Go 1.21, standard library `net/http` (no web framework), `github.com/lib/pq` as the Postgres driver, `golang.org/x/crypto` for password hashing.
+- **Backend** — Go 1.26, standard library `net/http` (no web framework), `github.com/lib/pq` as the Postgres driver, `golang.org/x/crypto` for password hashing.
 - **Database** — PostgreSQL 15.
 - **Frontend** — Vanilla JS SPA (hash-routed, no framework or bundler). Three static files served by the Go backend: `index.html`, `styles.css`, `app.js`.
 - **Containerisation** — Docker + Docker Compose. Two services: `events-db` (Postgres) and `events-backend` (Go).
