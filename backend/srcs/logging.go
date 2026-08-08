@@ -100,6 +100,13 @@ func LogMiddleware(next http.Handler) http.Handler {
 			rec.status = http.StatusOK
 		}
 
+		// Docker probes /healthz every 10s. Logging the successes would bury
+		// real traffic in ~8600 lines a day; a failing probe still logs, which
+		// is the case anyone actually greps for.
+		if r.URL.Path == healthPath && rec.status == http.StatusOK {
+			return
+		}
+
 		log.Printf("req=%s %s %s %d %s %dB ip=%s",
 			id,
 			r.Method,

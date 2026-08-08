@@ -91,8 +91,12 @@ func isExactEventPath(path string) bool {
 func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	// Auth routes (public)
 	switch {
+	// Health check (public, unauthenticated — Docker has no credentials)
+	case path == healthPath && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		HealthHandler(w, r)
+
+	// Auth routes (public)
 	case path == "/auth/register" && r.Method == "POST":
 		RateLimit(RegisterHandler)(w, r)
 	case path == "/auth/login" && r.Method == "POST":
@@ -137,9 +141,10 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(RecordVoteHandler)(w, r)
 
 	default:
-		// Anything else: serve the frontend (file or SPA fallback) for GET,
-		// otherwise 404.
-		if r.Method == http.MethodGet {
+		// Anything else: serve the frontend (file or SPA fallback) for GET and
+		// HEAD, otherwise 404. HEAD matters because it's what a plain
+		// `curl -I` health probe sends; net/http drops the body itself.
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
 			serveFrontend(w, r)
 			return
 		}
