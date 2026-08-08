@@ -208,6 +208,34 @@ docker compose down                     # stop (keeps the DB volume)
 sudo systemctl status cloudflared       # tunnel health
 ```
 
+### Reading the logs
+
+The backend writes one line per request:
+
+```
+2026/08/08 15:42:51 req=3ca2fd01 GET /events 500 6.11ms 23B ip=203.0.113.7
+```
+
+`req=` is a per-request ID, also returned to the client as the `X-Request-Id`
+header. A 500 logs a second line under the same ID with the underlying cause —
+the client only ever sees the generic message:
+
+```
+2026/08/08 15:42:51 req=3ca2fd01 ERROR GET /events: Failed to fetch events: dial tcp: lookup postgres: no such host
+```
+
+So when someone reports an error, ask for the `X-Request-Id` from their browser's
+network tab and:
+
+```bash
+docker compose logs backend | grep req=3ca2fd01   # both lines for that request
+docker compose logs backend | grep ERROR          # every 500 since startup
+docker compose logs backend | grep WARN           # rows the storage layer skipped
+```
+
+Invitation tokens are redacted from logged paths (`/invitations/***`) because
+they grant access to an invite-only event; query strings are never logged.
+
 ### Database backup / restore
 Postgres data lives in the named volume `events_postgres_data`.
 

@@ -66,8 +66,10 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RouteHandler)
 
-	// Middleware chain (outermost first): cap request bodies, then CORS.
-	handler := CORSMiddleware(MaxBytesMiddleware(mux))
+	// Middleware chain (outermost first): log, then CORS, then cap request
+	// bodies. Logging wraps everything so the line reports the status actually
+	// sent, including CORS preflights and oversized-body rejections.
+	handler := LogMiddleware(CORSMiddleware(MaxBytesMiddleware(mux)))
 
 	port := ":8080"
 	srv := &http.Server{

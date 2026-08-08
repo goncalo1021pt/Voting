@@ -67,7 +67,7 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		serverError(w, r, "Failed to hash password", err)
 		return
 	}
 
@@ -78,14 +78,14 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Username or email already exists", http.StatusConflict)
 			return
 		}
-		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		serverError(w, r, "Failed to create user", err)
 		return
 	}
 
 	// Generate token and persist session
 	token, err := issueSession(user.ID)
 	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		serverError(w, r, "Failed to create session", err)
 		return
 	}
 
@@ -131,7 +131,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate token and persist session
 	token, err := issueSession(user.ID)
 	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		serverError(w, r, "Failed to create session", err)
 		return
 	}
 
