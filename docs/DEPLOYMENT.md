@@ -310,6 +310,25 @@ e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
 
   > If you ever republish the backend beyond loopback, revisit this list first.
   > Trusting a range you don't control hands out rate-limit immunity.
+- **Security headers** are set on every response — CSP (scripts limited to
+  same-origin plus a per-request nonce), `nosniff`, `Referrer-Policy`,
+  `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy`. Check them with:
+
+  ```bash
+  curl -sI https://vote.fontao.net/ | grep -i -E 'content-security|x-frame|nosniff|referrer'
+  ```
+
+  Adding a third-party script, font or image source means widening the CSP in
+  `backend/srcs/security.go` — the browser will silently refuse to load it
+  otherwise. Watch the browser console after any frontend change that pulls in
+  something new.
+- **CORS is off** unless `ALLOWED_ORIGINS` is set (comma-separated). The
+  frontend is served from this same origin, so it needs none. Set it only if
+  another origin must call the API, and list exact origins — the old
+  `Access-Control-Allow-Origin: *` applied to authenticated responses too.
+- **HSTS is not set by the backend.** Cloudflare terminates TLS, so enable
+  *Strict Transport Security* there (SSL/TLS → Edge Certificates) rather than
+  emitting it from an origin that also answers plain HTTP on localhost.
 - Keep `.env` out of git (it holds `DB_PASSWORD`); it's already in `.gitignore`.
 - The VM's cloud-init console password should be changed from its initial value
   (`passwd` on the VM); SSH-key login is the primary access path.

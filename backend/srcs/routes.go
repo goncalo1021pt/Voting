@@ -37,6 +37,16 @@ func injectAssetVersion(html, version string) string {
 	return html
 }
 
+// injectScriptNonce tags the shell's inline theme script with the CSP nonce for
+// this response. It matches the bare `<script>` only — the external `/app.js`
+// tag carries a src attribute and is allowed by 'self'.
+func injectScriptNonce(html, nonce string) string {
+	if nonce == "" {
+		return html
+	}
+	return strings.Replace(html, "<script>", `<script nonce="`+nonce+`">`, 1)
+}
+
 // serveIndex writes index.html with fingerprinted asset URLs and marks the HTML
 // itself no-cache, so a redeployed build is picked up immediately (no hard
 // refresh) while the fingerprinted assets stay cacheable long-term.
@@ -48,7 +58,8 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	io.WriteString(w, injectAssetVersion(string(b), assetVersion))
+	html := injectAssetVersion(string(b), assetVersion)
+	io.WriteString(w, injectScriptNonce(html, scriptNonce(r)))
 }
 
 // serveFrontend serves a file from frontend/ if it exists, otherwise falls
@@ -150,20 +161,4 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
-}
-
-// CORSMiddleware adds CORS headers to responses
-func CORSMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }

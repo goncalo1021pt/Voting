@@ -45,6 +45,9 @@ services:
       # loopback + the Docker bridge ranges, which is what cloudflared comes
       # in on. See docs/DEPLOYMENT.md.
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      # Optional. Cross-origin allowlist; empty means same-origin only, which
+      # is all the bundled frontend needs.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     depends_on:
       postgres:
         condition: service_healthy
