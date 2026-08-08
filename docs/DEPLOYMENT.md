@@ -89,10 +89,14 @@ EOF
 Build and start:
 
 ```bash
-docker compose up -d --build      # or: make up
-docker compose ps                 # backend healthy + db healthy
-curl -sI http://localhost:8080/   # expect HTTP 200
+docker compose up -d --build          # or: make up
+docker compose ps                     # backend healthy + db healthy
+curl -sI http://localhost:8080/       # expect HTTP 200
+curl -s  http://localhost:8080/healthz # expect: ok
 ```
+
+The backend reports `healthy` once `/healthz` can reach the database, which
+takes a few seconds after `up` (the healthcheck has a 20s start period).
 
 ## 4. Public access — Cloudflare Tunnel (one-time)
 
@@ -207,6 +211,28 @@ docker compose restart backend          # restart just the backend
 docker compose down                     # stop (keeps the DB volume)
 sudo systemctl status cloudflared       # tunnel health
 ```
+
+### Health
+
+`GET /healthz` pings the database and returns `200 ok` or `503 database
+unreachable`, so "healthy" means the backend can actually serve — not merely
+that the process is listening. Compose probes it every 10s:
+
+```bash
+curl -s http://localhost:8080/healthz
+docker compose ps                       # backend shows (healthy) / (unhealthy)
+docker inspect --format '{{.State.Health.Status}}' events-backend
+```
+
+> **A failing healthcheck does not restart the container.** Plain Docker only
+> acts on `restart:` policies when a container *exits*; restarting on an
+> unhealthy status is a Swarm feature. What you get here is an accurate
+> `docker compose ps`, a signal for monitoring to alert on, and a gate for
+> `depends_on: service_healthy`. Restart a wedged backend by hand with
+> `docker compose restart backend`.
+
+Successful probes are deliberately kept out of the access log — at every 10s
+they'd add ~8,600 lines a day. Failing ones are logged with the cause.
 
 ### Reading the logs
 

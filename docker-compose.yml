@@ -43,6 +43,20 @@ services:
         condition: service_healthy
     networks:
       - events-network
+    # /healthz pings the database, so "healthy" means the backend can actually
+    # serve — not just that the process is listening. BusyBox wget ships in the
+    # alpine runtime image.
+    #
+    # Note this marks the container unhealthy; it does not restart it. Plain
+    # Docker only restarts on exit, not on a failed healthcheck (that's a Swarm
+    # feature). The value here is an accurate `docker compose ps`, a signal for
+    # monitoring, and a gate for `depends_on: service_healthy`.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   postgres_data:

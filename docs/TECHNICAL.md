@@ -65,6 +65,7 @@ Routed in `backend/srcs/routes.go`:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| `GET` | `/healthz` | — | Liveness + DB reachability; `200 ok` or `503` |
 | `POST` | `/auth/register` | — | Create account |
 | `POST` | `/auth/login` | — | Login, returns session token |
 | `POST` | `/auth/logout` | ✓ | Invalidate session |
