@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -184,10 +185,24 @@ func issueSession(userID int) (string, error) {
 	return token, nil
 }
 
+// userIDContextKey carries the caller resolved by RequireAuth. Values 0 and 1
+// are taken by requestIDContextKey (logging.go) and scriptNonceContextKey
+// (security.go).
+const userIDContextKey contextKey = 2
+
+// authenticatedUserID returns the caller RequireAuth already resolved, and
+// whether there was one. Reusing it matters: GetUserFromToken slides the
+// session, so each extra call is another UPDATE for the same request.
+func authenticatedUserID(r *http.Request) (int, bool) {
+	userID, ok := r.Context().Value(userIDContextKey).(int)
+	return userID, ok
+}
+
 // RequireAuth is middleware that checks for valid authentication.
 func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, err := GetUserFromToken(r); err != nil {
+		userID, err := GetUserFromToken(r)
+		if err != nil {
 			if errors.Is(err, ErrSessionInvalid) {
 				http.Error(w, "Session expired", http.StatusUnauthorized)
 				return
@@ -195,7 +210,7 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), userIDContextKey, userID)))
 	}
 }
 
