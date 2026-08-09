@@ -405,13 +405,29 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 	var eventID int
 	var redeemedBy *int
 	var expired bool
+	var isActive bool
 
 	// The expiry comparison runs in SQL so it uses the same clock that stamped
 	// expires_at at creation time.
-	err = tx.QueryRow(
-		"SELECT event_id, redeemed_by, (expires_at IS NOT NULL AND expires_at < NOW()) FROM invitations WHERE token = $1",
+	//
+	// The row locks make the checks below mean something at commit time rather
+	// than merely at read time:
+	//   FOR UPDATE OF i — two people redeeming the same token concurrently
+	//     would otherwise both see redeemed_by IS NULL and both join.
+	//   FOR SHARE OF e  — a host closing the event mid-redemption blocks until
+	//     this transaction finishes, instead of racing the is_active check.
+	err = tx.QueryRow(`
+		SELECT i.event_id,
+		       i.redeemed_by,
+		       (i.expires_at IS NOT NULL AND i.expires_at < NOW()),
+		       e.is_active
+		FROM invitations i
+		JOIN events e ON e.id = i.event_id
+		WHERE i.token = $1
+		FOR UPDATE OF i
+		FOR SHARE OF e`,
 		token,
-	).Scan(&eventID, &redeemedBy, &expired)
+	).Scan(&eventID, &redeemedBy, &expired, &isActive)
 
 	if err == sql.ErrNoRows {
 		return 0, ErrInvitationNotFound
@@ -425,6 +441,13 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 	}
 	if expired {
 		return 0, ErrInvitationExpired
+	}
+	// A link issued while the event was open must not still let people in
+	// after the host closes it. Visibility deliberately isn't checked: an
+	// invitation is a grant to join this event, and if it has since become
+	// public then joining was allowed anyway.
+	if !isActive {
+		return 0, ErrEventClosed
 	}
 
 	// Update invitation
