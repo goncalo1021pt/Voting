@@ -404,6 +404,9 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
 		case errors.Is(err, ErrInvitationExpired):
 			http.Error(w, "Invitation has expired", http.StatusGone)
+		case errors.Is(err, ErrEventClosed):
+			// Same 410 the public-join path returns for a closed event.
+			http.Error(w, "Event is closed", http.StatusGone)
 		default:
 			serverError(w, r, "Failed to redeem invitation", err)
 		}
