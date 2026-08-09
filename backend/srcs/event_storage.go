@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -14,7 +13,7 @@ func GetEventsFromDB(userID int) ([]Event, error) {
 	var err error
 	if userID > 0 {
 		rows, err = db.Query(`
-			SELECT e.id, e.host_id, e.name, e.description, e.visibility, e.results_visibility, e.is_active, e.created_at,
+			SELECT e.id, e.host_id, e.name, COALESCE(e.description, ''), e.visibility, e.results_visibility, e.is_active, e.created_at,
 			       EXISTS(SELECT 1 FROM event_members em WHERE em.event_id = e.id AND em.user_id = $1) AS is_member
 			FROM events e
 			WHERE e.visibility = 'public'
@@ -24,7 +23,7 @@ func GetEventsFromDB(userID int) ([]Event, error) {
 		`, userID)
 	} else {
 		rows, err = db.Query(`
-			SELECT id, host_id, name, description, visibility, results_visibility, is_active, created_at, false AS is_member
+			SELECT id, host_id, name, COALESCE(description, ''), visibility, results_visibility, is_active, created_at, false AS is_member
 			FROM events
 			WHERE visibility = 'public'
 			ORDER BY created_at DESC
@@ -145,7 +144,7 @@ func GetEventFromDB(eventID int) (*Event, error) {
 	var createdAt time.Time
 
 	err := db.QueryRow(
-		"SELECT id, host_id, name, description, visibility, results_visibility, is_active, require_full_ballot, created_at FROM events WHERE id = $1",
+		"SELECT id, host_id, name, COALESCE(description, ''), visibility, results_visibility, is_active, require_full_ballot, created_at FROM events WHERE id = $1",
 		eventID,
 	).Scan(&event.ID, &event.HostID, &event.Name, &event.Description, &event.Visibility, &event.ResultsVisibility, &event.IsActive, &event.RequireFullBallot, &createdAt)
 
@@ -158,26 +157,46 @@ func GetEventFromDB(eventID int) (*Event, error) {
 
 	event.CreatedAt = createdAt
 
-	db.QueryRow(
+	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
-	).Scan(&event.MemberCount)
+	).Scan(&event.MemberCount); err != nil {
+		return nil, fmt.Errorf("failed to count members: %w", err)
+	}
 
 	// Turnout: current members who have cast at least one vote anywhere in the
 	// event. Distinct because a voter filling in five categories is still one
 	// voter. Restricted to current members so this can't exceed member_count
 	// after a removal — a removed member's votes stay in the tallies, but they
 	// are no longer part of the "x of y voted" denominator.
-	db.QueryRow(`
+	if err := db.QueryRow(`
 		SELECT COUNT(DISTINCT v.user_id)
 		FROM votes v
 		JOIN categories c ON c.id = v.category_id
 		JOIN event_members m ON m.user_id = v.user_id AND m.event_id = c.event_id
 		WHERE c.event_id = $1`, eventID,
-	).Scan(&event.VoterCount)
+	).Scan(&event.VoterCount); err != nil {
+		return nil, fmt.Errorf("failed to count voters: %w", err)
+	}
 
-	// Get categories
+	categories, err := categoriesWithOptionsFromDB(eventID)
+	if err != nil {
+		return nil, err
+	}
+	event.Categories = categories
+
+	return &event, nil
+}
+
+// categoriesWithOptionsFromDB loads an event's categories and their options in
+// two queries rather than one per category, which mattered on imported events
+// with many categories.
+//
+// A scan failure is returned rather than skipped: serving an event with a
+// category or option quietly missing looks like the host never created it, and
+// on a voting app that is a worse outcome than an error the caller can retry.
+func categoriesWithOptionsFromDB(eventID int) ([]Category, error) {
 	rows, err := db.Query(
-		"SELECT id, event_id, name, COALESCE(description, '') FROM categories WHERE event_id = $1",
+		"SELECT id, event_id, name, COALESCE(description, '') FROM categories WHERE event_id = $1 ORDER BY id",
 		eventID,
 	)
 	if err != nil {
@@ -185,40 +204,53 @@ func GetEventFromDB(eventID int) (*Event, error) {
 	}
 	defer rows.Close()
 
-	// Skipping a row silently would serve a partial event as if it were whole.
-	// Dropping it is still wrong — issue #48 tracks propagating these — but at
-	// least the operator can now see that it happened.
+	var categories []Category
 	for rows.Next() {
 		var category Category
 		if err := rows.Scan(&category.ID, &category.EventID, &category.Name, &category.Description); err != nil {
-			log.Printf("WARN event %d: skipping category row: %v", eventID, err)
-			continue
+			return nil, fmt.Errorf("failed to scan category row: %w", err)
 		}
-
-		// Get options for this category
-		optRows, err := db.Query(
-			"SELECT id, category_id, name FROM options WHERE category_id = $1",
-			category.ID,
-		)
-		if err != nil {
-			log.Printf("WARN event %d: skipping options for category %d: %v", eventID, category.ID, err)
-			continue
-		}
-
-		for optRows.Next() {
-			var option Option
-			if err := optRows.Scan(&option.ID, &option.CategoryID, &option.Name); err != nil {
-				log.Printf("WARN event %d: skipping option row in category %d: %v", eventID, category.ID, err)
-				continue
-			}
-			category.Options = append(category.Options, option)
-		}
-		optRows.Close()
-
-		event.Categories = append(event.Categories, category)
+		categories = append(categories, category)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("category rows error: %w", err)
+	}
+	if len(categories) == 0 {
+		return nil, nil
 	}
 
-	return &event, nil
+	// Indexed only once the slice has stopped growing — append reallocates, and
+	// pointers taken earlier would address the old array.
+	byID := make(map[int]*Category, len(categories))
+	for i := range categories {
+		byID[categories[i].ID] = &categories[i]
+	}
+
+	optRows, err := db.Query(`
+		SELECT o.id, o.category_id, o.name
+		FROM options o
+		JOIN categories c ON c.id = o.category_id
+		WHERE c.event_id = $1
+		ORDER BY o.id`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch options: %w", err)
+	}
+	defer optRows.Close()
+
+	for optRows.Next() {
+		var option Option
+		if err := optRows.Scan(&option.ID, &option.CategoryID, &option.Name); err != nil {
+			return nil, fmt.Errorf("failed to scan option row: %w", err)
+		}
+		if category := byID[option.CategoryID]; category != nil {
+			category.Options = append(category.Options, option)
+		}
+	}
+	if err := optRows.Err(); err != nil {
+		return nil, fmt.Errorf("option rows error: %w", err)
+	}
+
+	return categories, nil
 }
 
 // IsEventHostFromDB checks if a user is the host of an event
@@ -281,6 +313,9 @@ func RemoveMemberFromDB(eventID, userID int) error {
 	return nil
 }
 
+// It reports ErrEventNotFound distinctly from "not the host": collapsing the
+// two made every host-only endpoint answer 403 for an event that does not
+// exist, which tells a stranger the id is real.
 func IsEventHostFromDB(eventID, userID int) (bool, error) {
 	var hostID int
 	err := db.QueryRow(
@@ -288,8 +323,11 @@ func IsEventHostFromDB(eventID, userID int) (bool, error) {
 		eventID,
 	).Scan(&hostID)
 
+	if err == sql.ErrNoRows {
+		return false, ErrEventNotFound
+	}
 	if err != nil {
-		return false, fmt.Errorf("event not found: %w", err)
+		return false, fmt.Errorf("failed to look up event host: %w", err)
 	}
 
 	return hostID == userID, nil
@@ -509,24 +547,28 @@ func GetEventResultsFromDB(eventID, categoryID int) (*ResultsResponse, error) {
 	var results []Result
 	var totalVotes int
 
-	// A dropped row here understates a tally, which is worse than it sounds for
-	// a voting app — log it loudly. Propagating the error is issue #48.
+	// A dropped row understates a tally, so this fails the request rather than
+	// returning a plausible-looking wrong number.
 	for rows.Next() {
 		var result Result
 		var voteCount int
 		if err := rows.Scan(&result.OptionID, &result.OptionName, &voteCount); err != nil {
-			log.Printf("WARN category %d: skipping result row, tally may be understated: %v", categoryID, err)
-			continue
+			return nil, fmt.Errorf("failed to scan result row: %w", err)
 		}
 		result.Votes = voteCount
 		totalVotes += voteCount
 		results = append(results, result)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("result rows error: %w", err)
+	}
 
 	var memberCount int
-	db.QueryRow(
+	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
-	).Scan(&memberCount)
+	).Scan(&memberCount); err != nil {
+		return nil, fmt.Errorf("failed to count members: %w", err)
+	}
 
 	return &ResultsResponse{
 		CategoryID:   categoryID,
@@ -553,9 +595,11 @@ func GetAllEventResultsFromDB(eventID int) (*EventResultsResponse, error) {
 		return nil, fmt.Errorf("failed to fetch event: %w", err)
 	}
 
-	db.QueryRow(
+	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM event_members WHERE event_id = $1", eventID,
-	).Scan(&resp.MemberCount)
+	).Scan(&resp.MemberCount); err != nil {
+		return nil, fmt.Errorf("failed to count members: %w", err)
+	}
 
 	rows, err := db.Query(`
 		SELECT c.id, c.name, COALESCE(o.id, 0), COALESCE(o.name, ''), COUNT(v.id)
@@ -701,6 +745,13 @@ func RecordVoteInDB(userID, categoryID, optionID int) (*Vote, error) {
 	).Scan(&voteID, &createdAt)
 
 	if err != nil {
+		// The check above is advisory — nothing holds between it and this
+		// insert, so a second click that arrives in the gap loses to
+		// UNIQUE(category_id, user_id). That is the same "already voted"
+		// outcome, and it should read as 409 rather than a generic 500.
+		if isUniqueViolation(err) {
+			return nil, ErrAlreadyVoted
+		}
 		return nil, fmt.Errorf("failed to record vote: %w", err)
 	}
 
