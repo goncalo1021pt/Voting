@@ -181,9 +181,7 @@ func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user is the event host
-	isHost, err := IsEventHostFromDB(eventID, userID)
-	if err != nil || !isHost {
-		http.Error(w, "Only event host can create invitations", http.StatusForbidden)
+	if !requireHost(w, r, eventID, userID, "create invitations") {
 		return
 	}
 
@@ -233,9 +231,7 @@ func ListInvitationsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isHost, err := IsEventHostFromDB(eventID, userID)
-	if err != nil || !isHost {
-		http.Error(w, "Only event host can view invitations", http.StatusForbidden)
+	if !requireHost(w, r, eventID, userID, "view invitations") {
 		return
 	}
 
@@ -274,9 +270,7 @@ func RevokeInvitationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isHost, err := IsEventHostFromDB(eventID, userID)
-	if err != nil || !isHost {
-		http.Error(w, "Only event host can revoke invitations", http.StatusForbidden)
+	if !requireHost(w, r, eventID, userID, "revoke invitations") {
 		return
 	}
 
@@ -316,9 +310,7 @@ func ListMembersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isHost, err := IsEventHostFromDB(eventID, userID)
-	if err != nil || !isHost {
-		http.Error(w, "Only event host can view members", http.StatusForbidden)
+	if !requireHost(w, r, eventID, userID, "view members") {
 		return
 	}
 
@@ -358,9 +350,7 @@ func RemoveMemberHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isHost, err := IsEventHostFromDB(eventID, userID)
-	if err != nil || !isHost {
-		http.Error(w, "Only event host can remove members", http.StatusForbidden)
+	if !requireHost(w, r, eventID, userID, "remove members") {
 		return
 	}
 
@@ -567,6 +557,29 @@ func RecordVoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(vote)
+}
+
+// requireHost writes the right error and returns false when the caller may not
+// act as host of this event.
+//
+// The three outcomes were previously collapsed into one 403: a nonexistent
+// event answered "only the host can do that" — which tells a stranger the id is
+// real — and a database failure did too, silently, with nothing logged.
+func requireHost(w http.ResponseWriter, r *http.Request, eventID, userID int, action string) bool {
+	isHost, err := IsEventHostFromDB(eventID, userID)
+	if err != nil {
+		if errors.Is(err, ErrEventNotFound) {
+			http.Error(w, "Event not found", http.StatusNotFound)
+			return false
+		}
+		serverError(w, r, "Failed to verify event host", err)
+		return false
+	}
+	if !isHost {
+		http.Error(w, "Only event host can "+action, http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // RecordBallotHandler records a whole ballot atomically: POST /events/{id}/ballot.
