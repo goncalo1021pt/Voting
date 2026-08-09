@@ -93,6 +93,10 @@ const API = {
     removeMember: (eventId, userId) => api("DELETE", `/events/${eventId}/members/${userId}`),
     vote: (categoryId, optionId) =>
         api("POST", "/votes", { category_id: categoryId, option_id: optionId }),
+    // One request for the whole ballot: the server records it in a single
+    // transaction, so a submission either lands completely or not at all.
+    submitBallot: (eventId, votes) =>
+        api("POST", `/events/${eventId}/ballot`, { votes }),
     getResults: (eventId, categoryId) =>
         api("GET", `/events/${eventId}/results/${categoryId}`),
     getAllResults: (eventId) => api("GET", `/events/${eventId}/results`),
@@ -1337,16 +1341,23 @@ async function viewEvent({ eventId }) {
         submitBtn.addEventListener("click", async () => {
             submitBtn.disabled = true;
             submitBtn.textContent = "Submitting…";
-            let errors = 0;
-            for (const [catId, optId] of Object.entries(drafts)) {
-                try {
-                    await API.vote(Number(catId), Number(optId));
-                } catch (err) {
-                    if (err.status !== 409) errors++;
-                }
+
+            const votes = Object.entries(drafts).map(([catId, optId]) => ({
+                category_id: Number(catId),
+                option_id: Number(optId),
+            }));
+
+            try {
+                await API.submitBallot(event.id, votes);
+                toast("Votes submitted", "success");
+            } catch (err) {
+                // The ballot is all-or-nothing now, so there is no partial
+                // state to reconcile — report why and let them retry.
+                toast(err.message || "Could not submit votes", "error");
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Submit votes";
+                return;
             }
-            if (errors > 0) toast(`${errors} vote(s) failed`, "error");
-            else toast("Votes submitted", "success");
             router();
         });
 

@@ -550,6 +550,8 @@ func RecordVoteHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "You have already voted in this category", http.StatusConflict)
 		case errors.Is(err, ErrEventClosed):
 			http.Error(w, "Event is closed", http.StatusGone)
+		case errors.Is(err, ErrFullBallotRequired):
+			http.Error(w, "This event requires a complete ballot; submit all categories to /events/{id}/ballot", http.StatusConflict)
 		case errors.Is(err, ErrNotMember):
 			http.Error(w, "You must join the event before voting", http.StatusForbidden)
 		case errors.Is(err, ErrCategoryNotFound):
@@ -565,6 +567,72 @@ func RecordVoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(vote)
+}
+
+// RecordBallotHandler records a whole ballot atomically: POST /events/{id}/ballot.
+// It is the only way to vote on a require_full_ballot event, and the path the
+// frontend uses for every event.
+func RecordBallotHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := GetUserFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Path: /events/{id}/ballot
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	eventID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	var req BallotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	for _, v := range req.Votes {
+		if v.CategoryID == 0 || v.OptionID == 0 {
+			http.Error(w, "Each vote needs a category_id and an option_id", http.StatusBadRequest)
+			return
+		}
+	}
+
+	votes, err := RecordBallotInDB(userID, eventID, req.Votes)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrBallotEmpty):
+			http.Error(w, "Ballot contains no votes", http.StatusBadRequest)
+		case errors.Is(err, ErrDuplicateCategory):
+			http.Error(w, "Ballot has more than one vote for the same category", http.StatusBadRequest)
+		case errors.Is(err, ErrBallotIncomplete):
+			http.Error(w, "This event requires a vote in every category", http.StatusUnprocessableEntity)
+		case errors.Is(err, ErrAlreadyVoted):
+			http.Error(w, "You have already voted in one of these categories", http.StatusConflict)
+		case errors.Is(err, ErrEventNotFound):
+			http.Error(w, "Event not found", http.StatusNotFound)
+		case errors.Is(err, ErrEventClosed):
+			http.Error(w, "Event is closed", http.StatusGone)
+		case errors.Is(err, ErrNotMember):
+			http.Error(w, "You must join the event before voting", http.StatusForbidden)
+		case errors.Is(err, ErrCategoryNotFound):
+			http.Error(w, "Category not found in this event", http.StatusNotFound)
+		case errors.Is(err, ErrOptionNotFound):
+			http.Error(w, "Option not found in this category", http.StatusNotFound)
+		default:
+			serverError(w, r, "Failed to record ballot", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(votes)
 }
 
 // Bounds on an event payload, enforced before any DB work. These cap resource
