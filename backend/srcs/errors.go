@@ -17,4 +17,8 @@ var (
 	ErrInvitationExpired  = errors.New("invitation expired")
 	ErrMemberNotFound     = errors.New("member not found")
 	ErrCannotRemoveHost   = errors.New("the host cannot be removed from their own event")
+	ErrBallotIncomplete   = errors.New("ballot does not cover every category")
+	ErrFullBallotRequired = errors.New("this event requires a complete ballot")
+	ErrDuplicateCategory  = errors.New("ballot has more than one vote for a category")
+	ErrBallotEmpty        = errors.New("ballot contains no votes")
 )

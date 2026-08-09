@@ -647,10 +647,11 @@ func RecordVoteInDB(userID, categoryID, optionID int) (*Vote, error) {
 	// Resolve event for this category and check that it is active and the user is a member
 	var eventID int
 	var isActive bool
+	var requireFullBallot bool
 	err = db.QueryRow(
-		"SELECT e.id, e.is_active FROM categories c JOIN events e ON e.id = c.event_id WHERE c.id = $1",
+		"SELECT e.id, e.is_active, e.require_full_ballot FROM categories c JOIN events e ON e.id = c.event_id WHERE c.id = $1",
 		categoryID,
-	).Scan(&eventID, &isActive)
+	).Scan(&eventID, &isActive, &requireFullBallot)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrCategoryNotFound
@@ -659,6 +660,12 @@ func RecordVoteInDB(userID, categoryID, optionID int) (*Vote, error) {
 	}
 	if !isActive {
 		return nil, ErrEventClosed
+	}
+	// One category at a time cannot satisfy "every category", so this endpoint
+	// is closed on such events; callers use RecordBallotInDB instead. Without
+	// this, the flag was enforceable only by the browser that chose to obey it.
+	if requireFullBallot {
+		return nil, ErrFullBallotRequired
 	}
 
 	isMember, err := IsEventMemberFromDB(eventID, userID)

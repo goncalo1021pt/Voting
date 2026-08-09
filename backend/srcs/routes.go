@@ -136,6 +136,8 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(JoinEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/close") && r.Method == "POST":
 		RequireAuth(CloseEventHandler)(w, r)
+	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/ballot") && r.Method == "POST":
+		RequireAuth(RecordBallotHandler)(w, r)
 	case isExactEventPath(path) && r.Method == "DELETE":
 		RequireAuth(DeleteEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":

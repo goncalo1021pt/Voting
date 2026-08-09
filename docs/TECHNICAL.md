@@ -82,7 +82,8 @@ Routed in `backend/srcs/routes.go`:
 | `GET` | `/events/{id}/members` | ✓ host | List members (host first, then join order) |
 | `DELETE` | `/events/{id}/members/{userId}` | ✓ host | Remove a member; their cast votes are kept |
 | `POST` | `/invitations/{token}` | ✓ | Redeem invite token |
-| `POST` | `/votes` | ✓ | Cast a vote |
+| `POST` | `/events/{id}/ballot` | ✓ | Cast a whole ballot atomically; the only way to vote on a `require_full_ballot` event |
+| `POST` | `/votes` | ✓ | Cast one vote; 409 on a `require_full_ballot` event |
 | `GET` | `/events/{id}/results` | — | All-categories results (gated by visibility rules) |
 | `GET` | `/events/{id}/results/{catId}` | — | Single category results (gated by visibility rules) |
 | `GET` | `/` | — | Static frontend (SPA fallback) |
@@ -111,6 +112,7 @@ Backend listens on `:8080`, Postgres on `:5432`. The frontend is reachable at `h
 - **No web framework** — routing is a `switch` on `path` + `method` in `RouteHandler`.
 - **Storage layer is plain `database/sql`** — no ORM. Queries live in `*_storage.go` files.
 - **DB enforces invariants** — uniqueness (one vote per category per user, unique invite tokens, unique event membership) is enforced in SQL. Handlers rely on the DB to reject duplicates.
+- **Ballots are atomic** — `require_full_ballot` cannot be expressed one vote at a time, so `POST /events/{id}/ballot` records the whole ballot in a single transaction: it lands completely or not at all. `POST /votes` stays for lenient events and returns 409 on a strict one. Votes cast earlier count toward completeness, so a voter part-way through can finish with a ballot covering only what's left.
 - **Session sliding** — every authenticated request extends the session TTL by 30 days via an `UPDATE … RETURNING` pattern.
 - **Security headers** — `SecurityHeadersMiddleware` sets a CSP plus `nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`. Scripts are restricted to `'self'` and a **per-request nonce**, injected into the shell's inline theme script by `serveIndex`; the session token lives in localStorage, so this is what keeps an XSS from becoming account takeover. `style-src` allows `'unsafe-inline'` because `el()` sets style attributes — inline CSS can't reach the token, and `style-src-attr` isn't portable enough to rely on.
 - **CORS** — off unless `ALLOWED_ORIGINS` is set. The backend serves the frontend on the same origin and `app.js` fetches relative paths, so nothing legitimate needs it. When configured, the specific origin is echoed (never `*`) with `Vary: Origin`.

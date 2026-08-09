@@ -149,3 +149,11 @@ type VoteRequest struct {
 	CategoryID int `json:"category_id"`
 	OptionID   int `json:"option_id"`
 }
+
+// BallotRequest is a whole ballot submitted in one go. Recording every vote in
+// a single transaction is what makes require_full_ballot enforceable: a
+// per-category loop can fail halfway and leave exactly the partial ballot the
+// flag exists to prevent.
+type BallotRequest struct {
+	Votes []VoteRequest `json:"votes"`
+}
