@@ -326,6 +326,12 @@ e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
   frontend is served from this same origin, so it needs none. Set it only if
   another origin must call the API, and list exact origins — the old
   `Access-Control-Allow-Origin: *` applied to authenticated responses too.
+- **Rate limits** are per-endpoint and in-process (auth and event creation
+  10 per 5 min, invitation redemption 20, invites and voting 60). Authenticated
+  callers are counted per user, anonymous ones per IP. A 429 carries
+  `Retry-After: 300`. They live in `backend/srcs/middleware.go` — a restart
+  clears all counters, and with more than one backend container each would keep
+  its own tally, so Cloudflare rate rules remain the outer layer.
 - **HSTS is not set by the backend.** Cloudflare terminates TLS, so enable
   *Strict Transport Security* there (SSL/TLS → Edge Certificates) rather than
   emitting it from an origin that also answers plain HTTP on localhost.

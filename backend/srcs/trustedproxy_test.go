@@ -134,11 +134,8 @@ func fakeIP(i int) string {
 func TestRateLimitMiddlewareUsesResolvedIP(t *testing.T) {
 	withTrustedProxies(t, "172.16.0.0/12")
 
-	prev := authLimiter
-	authLimiter = newRateLimiter(2, time.Minute)
-	t.Cleanup(func() { authLimiter = prev })
-
-	handler := RateLimit(func(w http.ResponseWriter, r *http.Request) {
+	limiter := newRateLimiter(2, time.Minute)
+	handler := RateLimit(limiter, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 

@@ -102,6 +102,10 @@ func run() error {
 	// startup and then hourly so the table stops growing forever.
 	startSessionSweeper(ctx, time.Hour)
 
+	// Rate-limiter keys were only ever pruned when the same key came back, so
+	// every client that appeared once stayed resident forever.
+	startLimiterSweeper(ctx, 10*time.Minute, allLimiters)
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("Starting Events server on http://localhost%s\n", port)

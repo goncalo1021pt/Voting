@@ -109,9 +109,9 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Auth routes (public)
 	case path == "/auth/register" && r.Method == "POST":
-		RateLimit(RegisterHandler)(w, r)
+		RateLimit(authLimiter, RegisterHandler)(w, r)
 	case path == "/auth/login" && r.Method == "POST":
-		RateLimit(LoginHandler)(w, r)
+		RateLimit(authLimiter, LoginHandler)(w, r)
 	case path == "/auth/logout" && r.Method == "POST":
 		LogoutHandler(w, r)
 	case path == "/auth/me" && r.Method == "GET":
@@ -123,7 +123,7 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/results") && r.Method == "GET":
 		GetAllEventResultsHandler(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/invitations") && r.Method == "POST":
-		RequireAuth(CreateInvitationHandler)(w, r)
+		RequireAuth(RateLimit(invitationLimiter, CreateInvitationHandler))(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/invitations") && r.Method == "GET":
 		RequireAuth(ListInvitationsHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/invitations/") && r.Method == "DELETE":
@@ -137,7 +137,7 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/close") && r.Method == "POST":
 		RequireAuth(CloseEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/ballot") && r.Method == "POST":
-		RequireAuth(RecordBallotHandler)(w, r)
+		RequireAuth(RateLimit(votingLimiter, RecordBallotHandler))(w, r)
 	case isExactEventPath(path) && r.Method == "DELETE":
 		RequireAuth(DeleteEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":
@@ -145,13 +145,13 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	case path == "/events" && r.Method == "GET":
 		GetEventsHandler(w, r)
 	case path == "/events" && r.Method == "POST":
-		RequireAuth(CreateEventHandler)(w, r)
+		RequireAuth(RateLimit(createEventLimiter, CreateEventHandler))(w, r)
 	case strings.HasPrefix(path, "/invitations/") && r.Method == "POST":
-		RedeemInvitationHandler(w, r)
+		RateLimit(redeemLimiter, RedeemInvitationHandler)(w, r)
 
 	// Voting routes
 	case path == "/votes" && r.Method == "POST":
-		RequireAuth(RecordVoteHandler)(w, r)
+		RequireAuth(RateLimit(votingLimiter, RecordVoteHandler))(w, r)
 
 	default:
 		// Anything else: serve the frontend (file or SPA fallback) for GET and
