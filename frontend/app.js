@@ -274,8 +274,10 @@ function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
         if (v === false || v === null || v === undefined) continue;
+        // No `html:` escape hatch here on purpose: it was an unused innerHTML
+        // sink, and the session token in localStorage makes any XSS a full
+        // account takeover. Build nodes and pass text children instead.
         if (k === "class") node.className = v;
-        else if (k === "html") node.innerHTML = v;
         else if (k.startsWith("on") && typeof v === "function") {
             node.addEventListener(k.slice(2).toLowerCase(), v);
         } else if (k === "value") {

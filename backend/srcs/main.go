@@ -69,13 +69,18 @@ func run() error {
 		return fmt.Errorf("failed to configure trusted proxies: %w", err)
 	}
 
+	// Empty unless ALLOWED_ORIGINS is set; the frontend is same-origin.
+	InitAllowedOrigins()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RouteHandler)
 
-	// Middleware chain (outermost first): log, then CORS, then cap request
-	// bodies. Logging wraps everything so the line reports the status actually
-	// sent, including CORS preflights and oversized-body rejections.
-	handler := LogMiddleware(CORSMiddleware(MaxBytesMiddleware(mux)))
+	// Middleware chain (outermost first): log, set security headers, then CORS,
+	// then cap request bodies. Logging wraps everything so the line reports the
+	// status actually sent, including CORS preflights and oversized-body
+	// rejections. Security headers sit outside CORS so even a preflight
+	// response carries them.
+	handler := LogMiddleware(SecurityHeadersMiddleware(CORSMiddleware(MaxBytesMiddleware(mux))))
 
 	port := ":8080"
 	srv := &http.Server{
