@@ -5,7 +5,14 @@ build:
 
 up: build
 	docker compose up -d
-	@echo "Containers running. Access backend at http://localhost:8080"
+	@echo "Containers running. Access backend at http://localhost:8081"
+
+# Production. Adds the cloudflared connector that serves voting.fontao.net;
+# `up` deliberately leaves it out so a dev machine never answers for the
+# public hostname. Needs TUNNEL_TOKEN in .env.
+prod:
+	docker compose --profile tunnel up -d --build
+	@echo "Stack up with the tunnel. Public at https://voting.fontao.net"
 
 down:
 	docker compose down
@@ -53,7 +60,8 @@ prune:
 help:
 	@echo "Available commands:"
 	@echo "  make build   - Build Docker images"
-	@echo "  make up      - Build and run containers in background"
+	@echo "  make up      - Build and run containers in background (no tunnel)"
+	@echo "  make prod    - Build and run WITH the Cloudflare tunnel"
 	@echo "  make down    - Stop containers (data kept)"
 	@echo "  make logs    - Tail container logs"
 	@echo "  make backup  - Dump the database to backups/"
@@ -62,4 +70,4 @@ help:
 	@echo "  make fclean  - Also remove this project's images [needs CONFIRM=yes]"
 	@echo "  make prune   - Remove postgres volume/networks  [needs CONFIRM=yes]"
 
-.PHONY: all build up down logs backup clean fclean prune re help
+.PHONY: all build up prod down logs backup clean fclean prune re help

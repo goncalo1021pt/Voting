@@ -2,20 +2,29 @@
 
 How the Events app is hosted on the home lab (PowerEdge R620 → Proxmox VE).
 
-It runs as a Docker Compose stack inside a dedicated VM, and is published to the
-internet at **https://vote.fontao.net** through a **Cloudflare Tunnel** — so there
-are **no open ports** on the home router.
+It runs as a Docker Compose stack on a VM **shared with other apps**, and is
+published to the internet at **https://voting.fontao.net** through a **Cloudflare
+Tunnel** — so there are **no open ports** on the home router.
 
 ```
- user ──▶ vote.fontao.net ──▶ Cloudflare edge ──(outbound tunnel)──▶ VM "apps" (192.168.0.70)
-                                                                       └─ docker compose
-                                                                          ├─ events-backend  :8080  (API + frontend)
-                                                                          └─ events-db        (Postgres, named volume)
+ user ──▶ voting.fontao.net ──▶ Cloudflare edge
+                                      │
+                                      │  outbound tunnel "voting"
+                                      ▼
+                        VM "apps" (192.168.1.70)
+                         └─ docker compose — project "events"
+                            ├─ events-cloudflared ──┐   connector, no ports
+                            ├─ events-backend :8080 ◀┘  API + frontend
+                            └─ events-db               Postgres, named volume
 ```
 
 The Go backend serves **both the API and the static frontend** on `:8080`, and the
-Compose stack is fully self-contained (backend + Postgres), so deployment is just:
-run the stack, then point a tunnel hostname at `:8080`.
+Compose stack is fully self-contained (backend + Postgres + connector).
+
+The connector reaches the backend **over the Compose network** at `backend:8080`,
+so serving needs **no host port at all**. The stack does publish
+`127.0.0.1:8081`, but only for debugging over SSH — see *The shared VM* below for
+why 8081 and not 8080.
 
 ---
 
@@ -23,12 +32,40 @@ run the stack, then point a tunnel hostname at `:8080`.
 
 | Thing | Value |
 |---|---|
-| Host | Proxmox VE on PowerEdge R620 (`pve`, `192.168.0.5`) |
-| VM | `apps` — VM **200**, Debian 13 (cloud-init), static **192.168.0.70**, 4 GB / 2 cores / ~32 GB |
+| Host | Proxmox VE on PowerEdge R620 (`pve`, `192.168.1.5`) |
+| VM | `apps` — VM **200**, Debian 13 (cloud-init), static **192.168.1.70**, 4 GB / 2 cores / ~32 GB |
 | Login | user `goncalo` (SSH key + cloud-init password), passwordless `sudo` |
 | Runtime | Docker Engine + Compose plugin |
 | App dir | `~/events` on the VM |
-| Public URL | https://vote.fontao.net (Cloudflare Tunnel, no open ports) |
+| Public URL | https://voting.fontao.net (Cloudflare Tunnel, no open ports) |
+
+---
+
+## The shared VM
+
+`apps` is **not dedicated to this app**. It also runs, as separate Compose
+projects, the `questboard` stack (the DnD_Helper app, published at
+`dnd.fontao.net`), a `homelab-observability` stack (Grafana `:3000`, Prometheus
+`:9090`, cadvisor, node-exporter, postgres-exporter), and a GitHub Actions
+runner registered to the **DnD_Helper** repo — not to this one.
+
+Two consequences worth knowing before you touch anything:
+
+- **`127.0.0.1:8080` belongs to `questboard-app-1`.** This stack publishes
+  `127.0.0.1:8081` instead. That host port is for on-box debugging only; public
+  traffic never uses it, so the number is free to change if it ever clashes
+  again. The container still listens on `8080` internally — container ports live
+  in their own namespace and never clash.
+- **Each app has its own tunnel**, not one shared connector: `dnd`, `dnd-test`,
+  and `voting`. Adding this app does not touch questboard's tunnel, and
+  restarting this stack cannot take `dnd.fontao.net` down.
+
+Check what else is on the box before assuming a port or a name is free:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+ss -tlnp
+```
 
 ---
 
@@ -37,7 +74,7 @@ run the stack, then point a tunnel hostname at `:8080`.
 Created from the Debian 13 generic cloud image with cloud-init (static IP, SSH key):
 
 ```bash
-# on the Proxmox host (192.168.0.5)
+# on the Proxmox host (192.168.1.5)
 IMG=/var/lib/vz/template/iso/debian-13-genericcloud-amd64.qcow2   # downloaded from cloud.debian.org
 qm create 200 --name apps --memory 4096 --cores 2 --cpu host \
   --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-single --ostype l26 --agent enabled=1
@@ -47,7 +84,7 @@ qm set 200 --ide2 local-lvm:cloudinit
 qm set 200 --boot order=scsi0
 qm set 200 --serial0 socket --vga serial0
 qm set 200 --ciuser goncalo --cipassword '<password>' --sshkeys /root/<your>.pub
-qm set 200 --ipconfig0 ip=192.168.0.70/24,gw=192.168.0.1 --nameserver 1.1.1.1
+qm set 200 --ipconfig0 ip=192.168.1.70/24,gw=192.168.1.1 --nameserver 1.1.1.1
 qm resize 200 scsi0 +30G
 qm start 200
 ```
@@ -55,7 +92,7 @@ qm start 200
 ## 2. Docker (one-time, in the VM)
 
 ```bash
-ssh goncalo@192.168.0.70
+ssh goncalo@192.168.1.70
 sudo apt-get update
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker goncalo   # log out/in for the group to apply
@@ -70,7 +107,7 @@ Get the code onto the VM (clone from GitHub, or copy from your machine):
 git clone git@github.com:goncalo1021pt/Voting.git ~/events
 
 # option B: copy a local working tree (tar over ssh)
-#   tar czf - --exclude=.git --exclude=.env . | ssh goncalo@192.168.0.70 'mkdir -p ~/events && tar xzf - -C ~/events'
+#   tar czf - --exclude=.git --exclude=.env . | ssh goncalo@192.168.1.70 'mkdir -p ~/events && tar xzf - -C ~/events'
 ```
 
 Create `~/events/.env` (see `.env.example`) with a **strong** `DB_PASSWORD`:
@@ -86,60 +123,82 @@ DB_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
 EOF
 ```
 
+Then append the tunnel connector token (see step 4 for where to get it):
+
+```bash
+echo "TUNNEL_TOKEN=<token from the Zero Trust dashboard>" >> .env
+```
+
 Build and start:
 
 ```bash
-docker compose up -d --build          # or: make up
-docker compose ps                     # backend healthy + db healthy
-curl -sI http://localhost:8080/       # expect HTTP 200
-curl -s  http://localhost:8080/healthz # expect: ok
+make prod                              # compose --profile tunnel up -d --build
+docker compose ps                      # backend + db healthy, cloudflared up
+curl -sI http://localhost:8081/        # expect HTTP 200
+curl -s  http://localhost:8081/healthz # expect: ok
 ```
 
 The backend reports `healthy` once `/healthz` can reach the database, which
-takes a few seconds after `up` (the healthcheck has a 20s start period).
+takes a few seconds after `up` (the healthcheck has a 20s start period). The
+connector waits for that healthy state before dialling out, so the tunnel never
+advertises an origin that cannot serve.
+
+> `make up` starts the stack **without** the connector — that is the dev path.
+> Production is `make prod`. The split exists so a laptop running `make up`
+> never starts answering for the production hostname.
 
 ## 4. Public access — Cloudflare Tunnel (one-time)
 
-`cloudflared` runs in the VM and dials **out** to Cloudflare, so nothing inbound is
-opened. Requires `fontao.net` to be on Cloudflare.
+`cloudflared` runs **as a container in this stack** and dials **out** to
+Cloudflare, so nothing inbound is opened. Requires `fontao.net` to be on
+Cloudflare.
+
+This is a **remotely-managed (token) tunnel**: the hostname → service mapping
+lives in the Cloudflare Zero Trust dashboard, **not** in a local
+`/etc/cloudflared/config.yml`. The VM holds only a connector token. There is
+nothing to install on the host with `apt` and no `systemd` unit — the tunnel is
+just another service in `docker-compose.yml`.
+
+In the dashboard — **Zero Trust → Networks → Tunnels** — the tunnel named
+**`voting`** already exists, with `voting.fontao.net` routed to it. To (re)create
+that state from scratch:
+
+1. **Create a tunnel** named `voting`, type `cloudflared`.
+2. **Add a public hostname**: subdomain `voting`, domain `fontao.net`, service
+   **`HTTP`** → **`backend:8080`**. Saving it creates the proxied DNS record
+   automatically (it shows in the DNS tab as type **Tunnel**, not CNAME).
+3. **Copy the connector token** from the tunnel's **Docker** install tab — the
+   long `eyJhIjoi…` string in the sample command — into `TUNNEL_TOKEN` in
+   `~/events/.env`.
+
+The service must be **`backend:8080`**, not `localhost:8080`: the connector runs
+in a container, so `localhost` is that container, not the VM. It resolves
+`backend` over the Compose network — which is also why this app needs no host
+port to serve.
+
+Then start it (step 3's `make prod` already does this):
 
 ```bash
-# install
-curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cf.deb
-sudo dpkg -i /tmp/cf.deb
-
-# authenticate (opens a browser URL; authorize the fontao.net zone)
-cloudflared tunnel login
-
-# create the tunnel + route the hostname
-cloudflared tunnel create events
-cloudflared tunnel route dns events vote.fontao.net
+docker compose --profile tunnel up -d
+docker compose logs -f cloudflared     # expect: "Registered tunnel connection"
 ```
 
-Config at **`/etc/cloudflared/config.yml`** (the hostname → local service mapping):
+The dashboard should flip the tunnel from **Down** to **Healthy** with 1 active
+replica within a few seconds.
 
-```yaml
-tunnel: <TUNNEL-UUID>
-credentials-file: /etc/cloudflared/<TUNNEL-UUID>.json
-
-ingress:
-  - hostname: vote.fontao.net
-    service: http://localhost:8080
-  - service: http_status:404
-```
-
-Install as a service:
-
-```bash
-sudo cloudflared service install
-sudo systemctl enable --now cloudflared
-```
-
-> **Where the domain is defined:** in two coupled places — the **Cloudflare DNS
-> CNAME** `vote.fontao.net → <UUID>.cfargotunnel.com` (created by `tunnel route dns`)
-> and the **`ingress`** block in `/etc/cloudflared/config.yml`. They're tied together
-> by the tunnel **UUID**. One tunnel can serve many hostnames — add more `ingress`
-> rules (+ a `route dns` each) to publish other apps on this VM.
+> **Where the domain is defined:** in two coupled places — the **DNS record**
+> `voting.fontao.net` (type *Tunnel*, proxied) and the tunnel's **public
+> hostname** entry, tied together by the tunnel **UUID**. Both are created for
+> you when you add the public hostname; you rarely touch the DNS tab directly.
+>
+> A hostname whose tunnel has no running connector answers **HTTP 530 (error
+> 1033)** — that is "the route exists, nothing is home", and it is what
+> `voting.fontao.net` served before this deploy. If you see 1033 later, check
+> `docker compose ps cloudflared` first.
+>
+> One tunnel *can* serve many hostnames, but this home lab runs **one tunnel per
+> app** so each stack owns its own public entrypoint and cannot break its
+> neighbours.
 >
 > Because the tunnel is outbound, the app needs **no port-forward and no DDNS** —
 > a changing home IP never breaks it. (Contrast: game servers, which do need those.)
@@ -149,10 +208,10 @@ sudo systemctl enable --now cloudflared
 ## Updating the app
 
 ```bash
-ssh goncalo@192.168.0.70
+ssh goncalo@192.168.1.70
 cd ~/events
 git pull                      # or re-copy the working tree
-docker compose up -d --build  # rebuild + restart with zero config changes
+make prod                     # rebuild + restart with zero config changes
 docker compose logs -f backend
 ```
 
@@ -161,7 +220,7 @@ docker compose logs -f backend
 The schema is owned by [goose](https://github.com/pressly/goose) migrations in
 `backend/srcs/migrations/`. They are **embedded in the backend binary** and run
 automatically at startup, before the server accepts traffic — so
-`docker compose up -d --build` is the whole migration procedure. If a migration
+`make prod` is the whole migration procedure. If a migration
 fails the backend exits rather than serving against a schema it doesn't expect;
 `docker compose logs backend` has the SQL error.
 
@@ -209,7 +268,7 @@ docker compose ps                       # status
 docker compose logs -f                  # live logs (all services)
 docker compose restart backend          # restart just the backend
 docker compose down                     # stop (keeps the DB volume)
-sudo systemctl status cloudflared       # tunnel health
+docker compose logs -f cloudflared      # tunnel health (no systemd unit)
 ```
 
 ### Health
@@ -219,7 +278,7 @@ unreachable`, so "healthy" means the backend can actually serve — not merely
 that the process is listening. Compose probes it every 10s:
 
 ```bash
-curl -s http://localhost:8080/healthz
+curl -s http://localhost:8081/healthz
 docker compose ps                       # backend shows (healthy) / (unhealthy)
 docker inspect --format '{{.State.Health.Status}}' events-backend
 ```
@@ -296,15 +355,15 @@ e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
 - **No inbound ports** are opened on the router — exposure is entirely via the
   Cloudflare Tunnel (outbound). Management is LAN-only / over SSH.
 - Postgres has **no host port mapping** — it is reachable only on the internal
-  Compose network. The backend publishes on **`127.0.0.1:8080`**, so only
-  processes on the VM (i.e. `cloudflared`) can reach it; the LAN cannot bypass
-  Cloudflare's TLS, WAF and rate rules by talking to it directly.
+  Compose network. The backend publishes on **`127.0.0.1:8081`** for debugging
+  only — public traffic arrives over the Compose network instead — so the LAN
+  cannot bypass Cloudflare's TLS, WAF and rate rules by talking to it directly.
 - **`CF-Connecting-IP` is only believed from a trusted peer.** It decides the
   rate-limit bucket and what lands in the access log, so a caller who could
   set it freely could present a new IP per request and make the auth limiter
   useless. Trusted peers default to loopback plus the Docker bridge ranges
-  (`127.0.0.0/8,::1/128,172.16.0.0/12`) — where cloudflared's traffic arrives
-  from — and anything else falls back to the real socket address. Override
+  (`127.0.0.0/8,::1/128,172.16.0.0/12`), which covers the Compose network that
+  the cloudflared container arrives from, and anything else falls back to the real socket address. Override
   with `TRUSTED_PROXY_CIDRS` if the topology changes; an unparseable value
   fails the boot rather than quietly changing who is trusted.
 
@@ -315,7 +374,7 @@ e.g. an `rclone` sync to object storage or a nightly `scp` to another machine
   `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy`. Check them with:
 
   ```bash
-  curl -sI https://vote.fontao.net/ | grep -i -E 'content-security|x-frame|nosniff|referrer'
+  curl -sI https://voting.fontao.net/ | grep -i -E 'content-security|x-frame|nosniff|referrer'
   ```
 
   Adding a third-party script, font or image source means widening the CSP in

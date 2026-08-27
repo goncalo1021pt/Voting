@@ -30,11 +30,15 @@ services:
       dockerfile: backend/Dockerfile
     container_name: events-backend
     restart: unless-stopped
-    # Loopback only. cloudflared runs on the host and reaches it here, while
-    # the LAN cannot — publishing on all interfaces let anything on the network
-    # bypass Cloudflare's TLS, WAF and rate rules and talk to the app directly.
+    # Debugging only — this is NOT how public traffic arrives. The cloudflared
+    # service below reaches the backend over the Compose network at
+    # backend:8080, so serving needs no host port at all.
+    #
+    # Loopback so the LAN cannot bypass Cloudflare's TLS, WAF and rate rules by
+    # talking to the app directly, and 8081 because 8080 on this VM belongs to
+    # the questboard stack that shares it.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
@@ -67,6 +71,33 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # The public entrypoint. Dials out to Cloudflare and serves
+  # voting.fontao.net from the "voting" tunnel, reaching the backend over this
+  # Compose network. No inbound port is opened on the VM or the router.
+  #
+  # Behind a profile so a plain `make up` on a laptop stays local — a dev
+  # machine must not start answering for the production hostname. Production
+  # brings it up with `make prod`.
+  #
+  # TUNNEL_TOKEN is validated by cloudflared at runtime. The ${VAR:-} form
+  # keeps compose from failing during global interpolation when it is unset,
+  # which would otherwise block unrelated commands like
+  # `docker compose up postgres`.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: events-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    # Only dial out once /healthz passes, so the tunnel never advertises an
+    # origin that cannot serve.
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - events-network
+    profiles:
+      - tunnel
 
 volumes:
   postgres_data:
