@@ -49,6 +49,11 @@ const auth = {
     },
 };
 
+// Which sign-in methods this deployment offers, filled in at boot from
+// /auth/config. Defaults to password-only, so a failed or slow config request
+// hides the Google button rather than offering one the server would refuse.
+let signInMethods = { google: false };
+
 // ---------- API client ----------
 
 async function api(method, path, body) {
@@ -80,6 +85,8 @@ const API = {
     register: (body) => api("POST", "/auth/register", body),
     login: (body) => api("POST", "/auth/login", body),
     logout: () => api("POST", "/auth/logout"),
+    authConfig: () => api("GET", "/auth/config"),
+    googleExchange: (code) => api("POST", "/auth/google/exchange", { code }),
     listEvents: () => api("GET", "/events"),
     getEvent: (id) => api("GET", `/events/${id}`),
     createEvent: (body) => api("POST", "/events", body),
@@ -506,6 +513,7 @@ const routes = [
     { pattern: /^#?\/?$/, view: viewHome },
     { pattern: /^#?\/login$/, view: viewLogin },
     { pattern: /^#?\/register$/, view: viewRegister },
+    { pattern: /^#?\/auth\/google\/([^/]+)$/, view: viewGoogleCallback, params: ["code"] },
     { pattern: /^#?\/events$/, view: viewEvents, requireAuth: true, skeleton: "list" },
     { pattern: /^#?\/events\/new$/, view: viewCreateEvent, requireAuth: true },
     { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"], skeleton: "results" },
@@ -598,6 +606,44 @@ async function viewHome() {
     render(hero);
 }
 
+// A plain link rather than a fetch: the browser has to *navigate* to Google,
+// and the server sets a state cookie on the way out that a background request
+// would throw away. Returns null when the server has no Google client
+// configured, and render()/el() both skip nulls.
+function googleSignIn() {
+    if (!signInMethods.google) return null;
+    return el("div", { class: "oauth" }, [
+        el("p", { class: "oauth-divider muted" }, "or"),
+        el("a", { class: "btn secondary", href: "/auth/google/login" }, "Continue with Google"),
+    ]);
+}
+
+// Where Google's redirect lands. The URL carries a one-time code, not a
+// session token, so nothing durable is left behind in browser history.
+async function viewGoogleCallback({ code }) {
+    document.querySelector("main").classList.add("narrow");
+
+    if (code === "error" || code === "error-email") {
+        toast(code === "error-email"
+            ? "That email already belongs to a password account — log in with your password instead."
+            : "Google sign-in failed. Please try again.", "error");
+        navigate("#/login");
+        return;
+    }
+
+    render(el("p", { class: "muted" }, "Finishing sign-in…"));
+    try {
+        const res = await API.googleExchange(code);
+        auth.set(res.token, res.user);
+        renderTopbar();
+        toast(`Welcome, ${res.user.username}`, "success");
+        navigate("#/events");
+    } catch (err) {
+        toast(err.message || "Google sign-in failed", "error");
+        navigate("#/login");
+    }
+}
+
 async function viewLogin() {
     document.querySelector("main").classList.add("narrow");
     const form = el("form", {
@@ -628,6 +674,7 @@ async function viewLogin() {
         el("p", { class: "eyebrow" }, "Sign in"),
         el("h1", {}, "Welcome back."),
         form,
+        googleSignIn(),
     );
 }
 
@@ -1541,6 +1588,12 @@ async function viewProfile() {
 
 window.addEventListener("hashchange", router);
 window.addEventListener("DOMContentLoaded", async () => {
+    // Started before the session check, not after: neither depends on the
+    // other, so there is no reason to pay for them in series.
+    const methods = API.authConfig()
+        .then((cfg) => { signInMethods = cfg; })
+        .catch(() => { /* leave Google hidden if the server cannot be asked */ });
+
     // Validate stored token before rendering anything — clears stale sessions.
     if (auth.token) {
         try {
@@ -1551,6 +1604,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             // api() already cleared auth on 401; other errors leave state as-is.
         }
     }
+    await methods;
     renderTopbar();
     router();
 });

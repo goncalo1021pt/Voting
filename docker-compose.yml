@@ -52,6 +52,11 @@ services:
       # Optional. Cross-origin allowlist; empty means same-origin only, which
       # is all the bundled frontend needs.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Optional. Google sign-in. All three or none — a half-configured client
+      # fails the boot rather than breaking mid-login. Unset hides the button.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

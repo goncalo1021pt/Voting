@@ -37,8 +37,12 @@ func GetUserByUsernameFromDB(username string) (*User, string, error) {
 	var passwordHash string
 	var createdAt string
 
+	// COALESCE because a Google-only user has no password_hash, and scanning a
+	// NULL into a string fails outright. Empty is the right answer here: bcrypt
+	// rejects it, so such a user simply cannot log in with a password — which
+	// is exactly the intent.
 	err := db.QueryRow(
-		"SELECT id, email, password_hash, created_at FROM users WHERE username = $1",
+		"SELECT id, email, COALESCE(password_hash, ''), created_at FROM users WHERE username = $1",
 		username,
 	).Scan(&userID, &email, &passwordHash, &createdAt)
 

@@ -23,6 +23,14 @@ func startSessionSweeper(ctx context.Context, interval time.Duration) {
 		} else if n > 0 {
 			log.Printf("Session sweep: removed %d expired session(s)", n)
 		}
+		// One-time OAuth codes live for two minutes and are deleted on use, so
+		// what remains here is only ever abandoned sign-ins. Swept alongside
+		// sessions rather than in a timer of its own.
+		if n, err := DeleteExpiredOAuthExchangesFromDB(); err != nil {
+			log.Printf("OAuth exchange sweep failed: %v", err)
+		} else if n > 0 {
+			log.Printf("OAuth exchange sweep: removed %d expired code(s)", n)
+		}
 	}
 	go func() {
 		sweep()
@@ -71,6 +79,16 @@ func run() error {
 
 	// Empty unless ALLOWED_ORIGINS is set; the frontend is same-origin.
 	InitAllowedOrigins()
+
+	// Google sign-in is optional. Absent credentials leave it switched off and
+	// the button hidden; a half-set trio fails the boot rather than surfacing
+	// as a broken redirect in the middle of someone's login.
+	if err := InitGoogleOAuth(); err != nil {
+		return fmt.Errorf("failed to configure google sign-in: %w", err)
+	}
+	if googleEnabled() {
+		log.Printf("Google sign-in enabled (redirect: %s)", googleCfg.redirectURL)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", RouteHandler)
