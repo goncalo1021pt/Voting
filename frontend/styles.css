@@ -1144,6 +1144,14 @@ main > .skeleton {
     body.is-home .topbar .actions .btn {
         display: none;
     }
+    /* And the same for the signed-in nav. On the home route the hero already
+       offers "Browse events", so the EVENTS tab is the same destination twice
+       — and because nav is a full-width row of its own here, it costs more
+       vertical space than the repeat is worth. Kept on every other page, where
+       it is the only way back to the list. */
+    body.is-home .topbar nav {
+        display: none;
+    }
     main {
         padding: 32px 18px 64px;
     }
