@@ -159,14 +159,33 @@ lives in the Cloudflare Zero Trust dashboard, **not** in a local
 nothing to install on the host with `apt` and no `systemd` unit — the tunnel is
 just another service in `docker-compose.yml`.
 
-In the dashboard — **Zero Trust → Networks → Tunnels** — the tunnel named
-**`voting`** already exists, with `voting.fontao.net` routed to it. To (re)create
-that state from scratch:
+> **It must be a remotely-managed tunnel.** Cloudflare has two kinds, and they
+> are not interchangeable. A **locally-managed** tunnel — what
+> `cloudflared tunnel create` on the CLI gives you — keeps its ingress in a
+> `config.yml` next to a credentials `.json` on the machine that created it;
+> the dashboard shows *"This tunnel is locally managed. Routes … cannot be
+> modified from the dashboard"* and refuses to edit the route. A
+> **remotely-managed** tunnel is created in the dashboard, keeps its ingress
+> there, and needs only a token to run — which is the only form that works for
+> a connector in a container built from this repo.
+>
+> There is no conversion between them: the credentials file is shown once at
+> creation and cannot be re-downloaded, so a locally-managed tunnel whose
+> `config.yml` you have lost must be deleted and recreated. An earlier attempt
+> at this deploy left exactly that behind — a locally-managed `voting` tunnel
+> pinned to `http://localhost:8080`.
 
-1. **Create a tunnel** named `voting`, type `cloudflared`.
+In the dashboard — **Zero Trust → Networks → Tunnels**:
+
+1. **Create a tunnel** named `voting`, type `cloudflared`, created **from the
+   dashboard** (never `cloudflared tunnel create` on the CLI).
 2. **Add a public hostname**: subdomain `voting`, domain `fontao.net`, service
    **`HTTP`** → **`backend:8080`**. Saving it creates the proxied DNS record
    automatically (it shows in the DNS tab as type **Tunnel**, not CNAME).
+
+   If this fails with *"An A, AAAA, or CNAME record with that host already
+   exists"*, a record for the hostname is left over from a previous tunnel —
+   delete it under **DNS → Records** and save again.
 3. **Copy the connector token** from the tunnel's **Docker** install tab — the
    long `eyJhIjoi…` string in the sample command — into `TUNNEL_TOKEN` in
    `~/events/.env`.
