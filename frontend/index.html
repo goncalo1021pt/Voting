@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Events</title>
     <meta name="description" content="Awards-show style voting for your events.">
+    <!-- Fonts live on two extra origins, so warm both connections before the
+         stylesheet is even parsed. These used to be pulled in by an @import at
+         the top of styles.css, which the browser's preload scanner cannot see:
+         it had to fetch styles.css, parse it, open a fresh DNS+TLS connection
+         to fonts.googleapis.com, then another to fonts.gstatic.com — four
+         serialized round trips before text could render in the right face.
+         Declared here, the scanner starts all of it immediately, in parallel
+         with styles.css. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&amp;family=Manrope:wght@300..800&amp;display=swap">
     <link rel="stylesheet" href="/styles.css">
     <script>
         // Set theme before paint to avoid a flash.

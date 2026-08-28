@@ -4,7 +4,10 @@
    Body:    Manrope (geometric sans, less generic than Inter/Geist)
    ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=Manrope:wght@300..800&display=swap");
+/* Fonts are loaded from <link> tags in index.html, not with @import. An
+   @import here is invisible to the preload scanner, so the browser could not
+   begin fetching them until it had downloaded and parsed this file — four
+   serialized round trips on a phone before text rendered. */
 
 :root,
 [data-theme="light"] {
@@ -106,6 +109,27 @@ body::before {
     display: none;
 }
 
+/* Same treatment for small screens, in every theme. The grain is a
+   full-viewport *fixed* layer whose background is a procedural SVG
+   feTurbulence noise composited with mix-blend-mode: multiply. Both halves are
+   expensive — the filter has to be rasterized, and the blend forces the
+   compositor to recombine the entire viewport rather than just the damaged
+   region. Because light mode already switches it off, this was a cost only
+   dark-mode users paid, which is most phones. Keep the texture where there is
+   a GPU to spare.
+
+   Specificity keeps the light-mode rule above winning, so light mode stays
+   clean on desktop too. */
+body::before {
+    display: none;
+}
+
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    body::before {
+        display: block;
+    }
+}
+
 a {
     color: var(--ink);
     text-decoration: none;
@@ -137,9 +161,20 @@ a.unstyled:hover {
     align-items: center;
     column-gap: 28px;
     padding: 18px 32px;
-    background: color-mix(in oklab, var(--bg) 92%, transparent);
-    backdrop-filter: blur(8px);
+    background: var(--bg);
     border-bottom: 1px solid var(--rule);
+}
+
+/* The translucent blur is a desktop nicety. On a *sticky* bar it forces the
+   compositor to re-sample and re-blur the strip behind it on every scroll
+   frame, which is the single biggest cause of scroll jank on phones. Give
+   pointer-precise wide viewports the effect and everyone else an opaque bar
+   that looks near-identical (92% -> 100% of the same colour). */
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+    .topbar {
+        background: color-mix(in oklab, var(--bg) 92%, transparent);
+        backdrop-filter: blur(8px);
+    }
 }
 
 .topbar .brand {
