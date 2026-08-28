@@ -634,6 +634,36 @@ button:disabled, .btn:disabled {
     margin-top: 4px;
 }
 
+/* Third-party sign-in, shown under the password form. */
+.oauth {
+    margin-top: 20px;
+}
+
+.oauth .btn {
+    width: 100%;
+    text-align: center;
+}
+
+/* A rule with the word centred in it, drawn with two flex spacers so it needs
+   no background colour to mask the line — which means it survives whatever the
+   surface behind it happens to be. */
+.oauth-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    text-transform: lowercase;
+}
+
+.oauth-divider::before,
+.oauth-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+}
+
 /* ==========================================================================
    Category editor / vote / results
    ========================================================================== */

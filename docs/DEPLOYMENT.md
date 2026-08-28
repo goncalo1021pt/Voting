@@ -205,6 +205,95 @@ replica within a few seconds.
 
 ---
 
+## 5. Google sign-in (optional)
+
+Password auth works on its own; this adds a "Continue with Google" button. The
+three `GOOGLE_*` variables are all-or-nothing — set all three, or none. A
+partially configured client **fails the boot** rather than breaking halfway
+through someone's login, and leaving them unset simply hides the button.
+
+### In Google Cloud Console
+
+1. **APIs & Services → OAuth consent screen.** User type **External**. Fill in
+   app name, support email and developer contact.
+2. **Scopes**: only `openid`, `.../auth/userinfo.email` and
+   `.../auth/userinfo.profile`. These are non-sensitive, so the app needs **no
+   Google verification review**.
+3. **Publish the app.** This is the step people miss. While the consent screen
+   is in **Testing**, *only* accounts explicitly listed as test users can sign
+   in — everyone else gets `403: access_denied`. For an event where guests sign
+   in, it must be **In production**. With only non-sensitive scopes, publishing
+   is immediate and does not queue for review.
+4. **Credentials → OAuth client ID → Web application.** Add one **Authorised
+   redirect URI**, character for character:
+
+   ```
+   https://voting.fontao.net/auth/google/callback
+   ```
+
+   A trailing slash, `http`, or a different host all produce
+   `Error 400: redirect_uri_mismatch`.
+5. Copy the **Client ID** and **Client secret**.
+
+### On the VM
+
+```bash
+cd ~/events
+cat >> .env <<'EOF'
+GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=<secret>
+GOOGLE_REDIRECT_URL=https://voting.fontao.net/auth/google/callback
+EOF
+make prod
+docker compose logs backend | grep "Google sign-in enabled"
+```
+
+`GET /auth/config` reports what the server offers, and the frontend only draws
+the button when it says `{"google":true}`:
+
+```bash
+curl -s https://voting.fontao.net/auth/config
+```
+
+### How the flow fits this app
+
+The app authenticates with bearer tokens held in `localStorage`, so the
+callback cannot simply set a cookie and be done. It also must not put the
+session token in the redirect URL, where it would persist in browser history.
+
+Instead the callback stores a **one-time code** — single use, two minute
+lifetime — and redirects to `/#/auth/google/<code>`, which the frontend
+immediately trades at `POST /auth/google/exchange` for a real session. The
+redemption is a `DELETE ... RETURNING` in one statement, so two concurrent
+requests cannot both come away with a session.
+
+CSRF state and the PKCE verifier ride in a short-lived cookie scoped to
+`/auth/google`, with `SameSite=Lax` — **not** `Strict`, which would withhold
+the cookie on exactly the top-level navigation Google sends back and break
+every login.
+
+Accounts are keyed on Google's `sub`, never on email: a Google account's
+address can change, `sub` cannot. An existing password account is linked to a
+Google identity only when Google reports the address as **verified** —
+otherwise anyone able to create a Google account bearing an existing user's
+address could take that account over.
+
+### Rate limits and shared venue Wi-Fi
+
+`/auth/register` and `/auth/login` are limited to **10 per 5 minutes per IP**
+for anonymous callers. Everyone behind one NAT — a venue's guest Wi-Fi — shares
+that budget, so the eleventh guest to sign up in five minutes gets a 429.
+
+The Google routes are deliberately **not** rate limited: they are cheap to
+reject (a bad `state` costs one string compare, no network call and no bcrypt),
+and the limiter would otherwise let a handful of guests lock out everyone
+behind the same NAT. So Google sign-in sidesteps the problem; mass *password*
+signup at a venue does not. Raise `authLimiter` in
+`backend/srcs/middleware.go` before an event where guests will register with
+passwords.
+
+---
+
 ## Updating the app
 
 ```bash

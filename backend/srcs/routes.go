@@ -117,6 +117,20 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 	case path == "/auth/me" && r.Method == "GET":
 		RequireAuth(MeHandler)(w, r)
 
+	// Which sign-in methods this deployment offers.
+	case path == "/auth/config" && r.Method == "GET":
+		AuthConfigHandler(w, r)
+
+	// Google OAuth. The callback is deliberately not rate limited: it is the
+	// leg Google itself drives, and a shared venue NAT would otherwise let a
+	// handful of guests exhaust the bucket for everyone behind it.
+	case path == "/auth/google/login" && r.Method == "GET":
+		GoogleLoginHandler(w, r)
+	case path == "/auth/google/callback" && r.Method == "GET":
+		GoogleCallbackHandler(w, r)
+	case path == "/auth/google/exchange" && r.Method == "POST":
+		GoogleExchangeHandler(w, r)
+
 	// Event routes (check most specific first)
 	case strings.HasPrefix(path, "/events/") && strings.Contains(path, "/results/") && r.Method == "GET":
 		GetEventResultsHandler(w, r)
