@@ -679,6 +679,22 @@ button:disabled, .btn:disabled {
     text-align: center;
 }
 
+/* Google's brand terms ask for the mark to be shown unmodified and with clear
+   space around it, so this button keeps the four brand fills instead of the
+   themed ink every other icon uses, and opens the gap a little wider than the
+   8px the rest of the buttons share. The mark reads correctly on both the
+   parchment and the dark surface, which is why it needs no white tile behind
+   it. */
+.oauth-google {
+    gap: 12px;
+}
+
+.oauth-google .google-mark {
+    width: 18px;
+    height: 18px;
+    flex: none;
+}
+
 /* A rule with the word centred in it, drawn with two flex spacers so it needs
    no background colour to mask the line — which means it survives whatever the
    surface behind it happens to be. */
