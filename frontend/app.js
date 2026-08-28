@@ -557,6 +557,12 @@ async function router() {
         // on narrow screens — the hero already offers the same two actions, and
         // on a phone the pair of them filled most of the first viewport.
         document.body.classList.toggle("is-home", r.view === viewHome);
+        // And the events list, where the EVENTS tab links to the page you are
+        // already on. This has to be an exact route match: setActiveNav marks
+        // the tab active for anything under #/events, so keying off .active
+        // would also hide it on an event's own page — the one place it is the
+        // only way back to the list.
+        document.body.classList.toggle("is-events", r.view === viewEvents);
         let skeletonTimer = null;
         if (r.skeleton) {
             $("main").setAttribute("aria-busy", "true");
