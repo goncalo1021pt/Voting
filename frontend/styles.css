@@ -1149,7 +1149,8 @@ main > .skeleton {
        — and because nav is a full-width row of its own here, it costs more
        vertical space than the repeat is worth. Kept on every other page, where
        it is the only way back to the list. */
-    body.is-home .topbar nav {
+    body.is-home .topbar nav,
+    body.is-events .topbar nav {
         display: none;
     }
     main {
