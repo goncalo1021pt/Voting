@@ -553,6 +553,10 @@ async function router() {
             navigate("#/events");
             return;
         }
+        // Marks the home route so CSS can drop the topbar's auth buttons there
+        // on narrow screens — the hero already offers the same two actions, and
+        // on a phone the pair of them filled most of the first viewport.
+        document.body.classList.toggle("is-home", r.view === viewHome);
         let skeletonTimer = null;
         if (r.skeleton) {
             $("main").setAttribute("aria-busy", "true");
