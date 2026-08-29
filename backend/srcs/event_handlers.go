@@ -200,29 +200,68 @@ func GetEventHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(redactEventForViewer(event, viewerID))
 }
 
-// maxInvitationTTLHours caps invitation expiry at one year.
-const maxInvitationTTLHours = 8760
+// Bounds on an invitation: expiry caps at one year, and a capped link at a
+// number no host is going to type by accident. Neither bounds an unlimited
+// link, which is expressed by leaving the field null rather than by a number.
+const (
+	maxInvitationTTLHours = 8760
+	maxInvitationUses     = 10000
+)
 
-// parseInvitationExpiry reads the optional CreateInvitation request body and
-// returns the requested time-to-live in hours, or nil when the body is empty
-// or omits expires_in_hours (meaning the invitation never expires).
-func parseInvitationExpiry(body io.Reader) (*int, error) {
+// invitationOptions is a parsed CreateInvitation body. Both fields carry "no
+// limit" as nil, matching how the columns behind them store it: a nil
+// expiresAt never expires, a nil maxUses admits any number of people.
+type invitationOptions struct {
+	expiresAt *time.Time
+	maxUses   *int
+}
+
+// parseInvitationRequest reads the optional CreateInvitation request body.
+//
+// max_uses is read as raw JSON because the three cases have to stay apart, and
+// a *int collapses two of them: the key absent means "single use" (what every
+// invitation was before multi-use links existed, and so what a caller that
+// doesn't know about the field still gets), an explicit null means unlimited,
+// and a number caps the link at that many people.
+func parseInvitationRequest(body io.Reader) (invitationOptions, error) {
+	single := 1
+	opts := invitationOptions{maxUses: &single}
+
 	var req struct {
-		ExpiresInHours *int `json:"expires_in_hours"`
+		ExpiresInHours *int            `json:"expires_in_hours"`
+		MaxUses        json.RawMessage `json:"max_uses"`
 	}
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil, nil // no body: no expiry
+			return opts, nil // no body: never expires, single use
 		}
-		return nil, fmt.Errorf("invalid request body")
+		return opts, fmt.Errorf("invalid request body")
 	}
-	if req.ExpiresInHours == nil {
-		return nil, nil
+
+	if req.ExpiresInHours != nil {
+		if *req.ExpiresInHours < 1 || *req.ExpiresInHours > maxInvitationTTLHours {
+			return opts, fmt.Errorf("expires_in_hours must be between 1 and %d", maxInvitationTTLHours)
+		}
+		expiresAt := time.Now().Add(time.Duration(*req.ExpiresInHours) * time.Hour)
+		opts.expiresAt = &expiresAt
 	}
-	if *req.ExpiresInHours < 1 || *req.ExpiresInHours > maxInvitationTTLHours {
-		return nil, fmt.Errorf("expires_in_hours must be between 1 and %d", maxInvitationTTLHours)
+
+	switch {
+	case req.MaxUses == nil: // key absent
+	case string(req.MaxUses) == "null":
+		opts.maxUses = nil // unlimited
+	default:
+		var uses int
+		if err := json.Unmarshal(req.MaxUses, &uses); err != nil {
+			return opts, fmt.Errorf("max_uses must be a number or null")
+		}
+		if uses < 1 || uses > maxInvitationUses {
+			return opts, fmt.Errorf("max_uses must be between 1 and %d, or null for unlimited", maxInvitationUses)
+		}
+		opts.maxUses = &uses
 	}
-	return req.ExpiresInHours, nil
+
+	return opts, nil
 }
 
 // CreateInvitationHandler creates an invitation to an event
@@ -252,22 +291,17 @@ func CreateInvitationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ttlHours, err := parseInvitationExpiry(r.Body)
+	opts, err := parseInvitationRequest(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	}
-	var expiresAt *time.Time
-	if ttlHours != nil {
-		t := time.Now().Add(time.Duration(*ttlHours) * time.Hour)
-		expiresAt = &t
 	}
 
 	// Generate token
 	token := generateInvitationToken()
 
 	// Create invitation
-	invitation, err := CreateInvitationInDB(eventID, userID, token, expiresAt)
+	invitation, err := CreateInvitationInDB(eventID, userID, token, opts.expiresAt, opts.maxUses)
 	if err != nil {
 		serverError(w, r, "Failed to create invitation", err)
 		return
@@ -342,12 +376,9 @@ func RevokeInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := DeleteInvitationFromDB(eventID, token); err != nil {
-		switch {
-		case errors.Is(err, ErrInvitationNotFound):
+		if errors.Is(err, ErrInvitationNotFound) {
 			http.Error(w, "Invitation not found", http.StatusNotFound)
-		case errors.Is(err, ErrInvitationRedeemed):
-			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
-		default:
+		} else {
 			serverError(w, r, "Failed to revoke invitation", err)
 		}
 		return
@@ -455,10 +486,18 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 	eventID, err := RedeemInvitationInDB(token, userID)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrAlreadyMember):
+			// Not a failure: they are in the event, which is what following
+			// the link was for. Answering 200 with the flag lets the frontend
+			// take them there and say so, rather than showing an error page
+			// for having arrived twice.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"already_member":true,"message":"You are already a member of this event"}`, eventID))
 		case errors.Is(err, ErrInvitationNotFound):
 			http.Error(w, "Invalid invitation", http.StatusNotFound)
 		case errors.Is(err, ErrInvitationRedeemed):
-			http.Error(w, "Invitation has already been redeemed", http.StatusConflict)
+			http.Error(w, "This invitation has already been used", http.StatusConflict)
 		case errors.Is(err, ErrInvitationExpired):
 			http.Error(w, "Invitation has expired", http.StatusGone)
 		case errors.Is(err, ErrEventClosed):
@@ -472,7 +511,7 @@ func RedeemInvitationHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"message":"Successfully joined event"}`, eventID))
+	io.WriteString(w, fmt.Sprintf(`{"event_id":%d,"already_member":false,"message":"Successfully joined event"}`, eventID))
 }
 
 // authorizeResultsView gates results viewing using the same rules for both

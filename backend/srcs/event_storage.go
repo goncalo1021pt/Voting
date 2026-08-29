@@ -336,14 +336,15 @@ func IsEventHostFromDB(eventID, userID int) (bool, error) {
 }
 
 // CreateInvitationInDB creates a new invitation. A nil expiresAt stores an
-// invitation that never expires.
-func CreateInvitationInDB(eventID, invitedBy int, token string, expiresAt *time.Time) (*Invitation, error) {
+// invitation that never expires; a nil maxUses stores one that admits any
+// number of people.
+func CreateInvitationInDB(eventID, invitedBy int, token string, expiresAt *time.Time, maxUses *int) (*Invitation, error) {
 	var invitationID int
 	var createdAt time.Time
 
 	err := db.QueryRow(
-		"INSERT INTO invitations (event_id, invited_by, token, expires_at) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
-		eventID, invitedBy, token, expiresAt,
+		"INSERT INTO invitations (event_id, invited_by, token, expires_at, max_uses) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
+		eventID, invitedBy, token, expiresAt, maxUses,
 	).Scan(&invitationID, &createdAt)
 
 	if err != nil {
@@ -357,16 +358,20 @@ func CreateInvitationInDB(eventID, invitedBy int, token string, expiresAt *time.
 		InvitedBy: invitedBy,
 		CreatedAt: createdAt,
 		ExpiresAt: expiresAt,
+		MaxUses:   maxUses,
 	}, nil
 }
 
-// ListInvitationsForEventFromDB returns every invitation for an event, with
-// the redeemer's username joined in when redeemed.
+// ListInvitationsForEventFromDB returns every invitation for an event, each
+// with the people it has admitted.
+//
+// Two queries rather than one row per redeemer: a link posted in a group chat
+// can have dozens, and the host list would otherwise repeat the invitation for
+// every one of them.
 func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
 	rows, err := db.Query(`
-		SELECT i.id, i.event_id, i.token, i.invited_by, i.redeemed_by, i.created_at, i.redeemed_at, i.expires_at, u.username
+		SELECT i.id, i.event_id, i.token, i.invited_by, i.created_at, i.expires_at, i.max_uses
 		FROM invitations i
-		LEFT JOIN users u ON u.id = i.redeemed_by
 		WHERE i.event_id = $1
 		ORDER BY i.created_at DESC
 	`, eventID)
@@ -378,63 +383,101 @@ func ListInvitationsForEventFromDB(eventID int) ([]Invitation, error) {
 	invitations := []Invitation{}
 	for rows.Next() {
 		var inv Invitation
-		var redeemedBy sql.NullInt64
-		var redeemedAt sql.NullTime
 		var expiresAt sql.NullTime
-		var username sql.NullString
-		if err := rows.Scan(&inv.ID, &inv.EventID, &inv.Token, &inv.InvitedBy, &redeemedBy, &inv.CreatedAt, &redeemedAt, &expiresAt, &username); err != nil {
+		var maxUses sql.NullInt64
+		if err := rows.Scan(&inv.ID, &inv.EventID, &inv.Token, &inv.InvitedBy, &inv.CreatedAt, &expiresAt, &maxUses); err != nil {
 			return nil, fmt.Errorf("failed to scan invitation row: %w", err)
-		}
-		if redeemedBy.Valid {
-			id := int(redeemedBy.Int64)
-			inv.RedeemedBy = &id
-		}
-		if redeemedAt.Valid {
-			t := redeemedAt.Time
-			inv.RedeemedAt = &t
 		}
 		if expiresAt.Valid {
 			t := expiresAt.Time
 			inv.ExpiresAt = &t
 		}
-		if username.Valid {
-			s := username.String
-			inv.RedeemedByUsername = &s
+		if maxUses.Valid {
+			n := int(maxUses.Int64)
+			inv.MaxUses = &n
 		}
 		invitations = append(invitations, inv)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("invitation rows error: %w", err)
 	}
+	if len(invitations) == 0 {
+		return invitations, nil
+	}
+
+	// Indexed only once the slice has stopped growing — append reallocates,
+	// and pointers taken earlier would address the old array.
+	byID := make(map[int]*Invitation, len(invitations))
+	for i := range invitations {
+		byID[invitations[i].ID] = &invitations[i]
+	}
+
+	redemptionRows, err := db.Query(`
+		SELECT r.invitation_id, r.user_id, u.username, r.redeemed_at
+		FROM invitation_redemptions r
+		JOIN invitations i ON i.id = r.invitation_id
+		JOIN users u ON u.id = r.user_id
+		WHERE i.event_id = $1
+		ORDER BY r.redeemed_at, r.id
+	`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list invitation redemptions: %w", err)
+	}
+	defer redemptionRows.Close()
+
+	for redemptionRows.Next() {
+		var invitationID int
+		var redemption InvitationRedemption
+		if err := redemptionRows.Scan(&invitationID, &redemption.UserID, &redemption.Username, &redemption.RedeemedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan redemption row: %w", err)
+		}
+		if inv := byID[invitationID]; inv != nil {
+			inv.Redemptions = append(inv.Redemptions, redemption)
+			inv.Uses++
+		}
+	}
+	if err := redemptionRows.Err(); err != nil {
+		return nil, fmt.Errorf("redemption rows error: %w", err)
+	}
+
 	return invitations, nil
 }
 
-// DeleteInvitationFromDB revokes an unredeemed invitation scoped to one event.
-// Returns ErrInvitationNotFound if no matching token exists for the event, or
-// ErrInvitationRedeemed if the invitation has already been used.
+// DeleteInvitationFromDB revokes an invitation scoped to one event, returning
+// ErrInvitationNotFound if no matching token exists for it.
+//
+// A link that people have already used can be revoked too, and that is the
+// point of it: an unlimited link posted in a group chat is a door standing
+// open, and the host needs a way to shut it. Revoking removes the link and its
+// record of who arrived through it; the memberships it granted stay, because
+// those people are in the event now regardless of how they got there.
 func DeleteInvitationFromDB(eventID int, token string) error {
-	var redeemedBy sql.NullInt64
-	err := db.QueryRow(
-		"SELECT redeemed_by FROM invitations WHERE event_id = $1 AND token = $2",
-		eventID, token,
-	).Scan(&redeemedBy)
-	if err == sql.ErrNoRows {
-		return ErrInvitationNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("failed to look up invitation: %w", err)
-	}
-	if redeemedBy.Valid {
-		return ErrInvitationRedeemed
-	}
-	_, err = db.Exec("DELETE FROM invitations WHERE event_id = $1 AND token = $2", eventID, token)
+	res, err := db.Exec("DELETE FROM invitations WHERE event_id = $1 AND token = $2", eventID, token)
 	if err != nil {
 		return fmt.Errorf("failed to delete invitation: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm revocation: %w", err)
+	}
+	if affected == 0 {
+		return ErrInvitationNotFound
 	}
 	return nil
 }
 
-// RedeemInvitationInDB redeems an invitation and adds user to event
+// RedeemInvitationInDB admits a user to an event through an invitation link,
+// returning the event they joined.
+//
+// An invitation may admit one person or many: max_uses NULL means unlimited,
+// and a count of the redemptions recorded so far is what gates a capped one.
+//
+// Someone who is already a member is turned away with ErrAlreadyMember without
+// spending a use. That case is ordinary — the host follows their own link, or
+// a guest clicks the group chat message twice — and letting it through burned
+// a single-use invitation on somebody who was already inside. The event id is
+// returned alongside that error, since the caller still wants to send them to
+// the event they are already in.
 func RedeemInvitationInDB(token string, userID int) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -442,8 +485,9 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 	}
 	defer tx.Rollback()
 
-	var eventID int
-	var redeemedBy *int
+	var invitationID, eventID int
+	var maxUses sql.NullInt64
+	var uses int
 	var expired bool
 	var isActive bool
 
@@ -452,13 +496,14 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 	//
 	// The row locks make the checks below mean something at commit time rather
 	// than merely at read time:
-	//   FOR UPDATE OF i — two people redeeming the same token concurrently
-	//     would otherwise both see redeemed_by IS NULL and both join.
+	//   FOR UPDATE OF i — two people redeeming the last use of a capped link
+	//     concurrently would otherwise both find room and both join.
 	//   FOR SHARE OF e  — a host closing the event mid-redemption blocks until
 	//     this transaction finishes, instead of racing the is_active check.
 	err = tx.QueryRow(`
-		SELECT i.event_id,
-		       i.redeemed_by,
+		SELECT i.id,
+		       i.event_id,
+		       i.max_uses,
 		       (i.expires_at IS NOT NULL AND i.expires_at < NOW()),
 		       e.is_active
 		FROM invitations i
@@ -467,7 +512,7 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 		FOR UPDATE OF i
 		FOR SHARE OF e`,
 		token,
-	).Scan(&eventID, &redeemedBy, &expired, &isActive)
+	).Scan(&invitationID, &eventID, &maxUses, &expired, &isActive)
 
 	if err == sql.ErrNoRows {
 		return 0, ErrInvitationNotFound
@@ -476,9 +521,18 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 		return 0, fmt.Errorf("failed to look up invitation: %w", err)
 	}
 
-	if redeemedBy != nil {
-		return 0, ErrInvitationRedeemed
+	// Counted in its own statement, deliberately: a waiter released by the
+	// statement above re-reads the row it was blocked on, but a subquery in
+	// that same statement keeps the snapshot it started with — so counting
+	// there let two concurrent redemptions both see room on a link with one
+	// use left. A new statement takes a fresh snapshot, and the lock is held
+	// by now, so this count includes whatever the transaction ahead committed.
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM invitation_redemptions WHERE invitation_id = $1", invitationID,
+	).Scan(&uses); err != nil {
+		return 0, fmt.Errorf("failed to count redemptions: %w", err)
 	}
+
 	if expired {
 		return 0, ErrInvitationExpired
 	}
@@ -490,27 +544,36 @@ func RedeemInvitationInDB(token string, userID int) (int, error) {
 		return 0, ErrEventClosed
 	}
 
-	// Update invitation
-	now := time.Now()
-	_, err = tx.Exec(
-		"UPDATE invitations SET redeemed_by = $1, redeemed_at = $2 WHERE token = $3",
-		userID, now, token,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("failed to update invitation: %w", err)
+	var alreadyMember bool
+	if err := tx.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM event_members WHERE event_id = $1 AND user_id = $2)",
+		eventID, userID,
+	).Scan(&alreadyMember); err != nil {
+		return 0, fmt.Errorf("failed to check membership: %w", err)
+	}
+	if alreadyMember {
+		return eventID, ErrAlreadyMember
 	}
 
-	// Add user to event members
-	_, err = tx.Exec(
+	if maxUses.Valid && uses >= int(maxUses.Int64) {
+		return 0, ErrInvitationRedeemed
+	}
+
+	if _, err := tx.Exec(
+		"INSERT INTO invitation_redemptions (invitation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+		invitationID, userID,
+	); err != nil {
+		return 0, fmt.Errorf("failed to record redemption: %w", err)
+	}
+
+	if _, err := tx.Exec(
 		"INSERT INTO event_members (event_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
 		eventID, userID,
-	)
-	if err != nil {
+	); err != nil {
 		return 0, fmt.Errorf("failed to add event member: %w", err)
 	}
 
-	err = tx.Commit()
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 

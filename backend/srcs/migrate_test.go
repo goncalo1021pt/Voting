@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pressly/goose/v3"
+
 	_ "github.com/lib/pq"
 )
 
@@ -124,5 +126,86 @@ func TestMigrationsAdoptPreExistingDatabase(t *testing.T) {
 	}
 	if events != 1 {
 		t.Fatalf("events row count = %d, want 1 — migration destroyed existing data", events)
+	}
+}
+
+// The deployed database has invitations that were already redeemed, and their
+// redeemer is the record of who a link let in. 00004 moves that record to its
+// own table before dropping the columns holding it — if it didn't, upgrading
+// would quietly lose it.
+func TestMultiUseMigrationCarriesExistingRedemptions(t *testing.T) {
+	withTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+
+	// Stop at 3: the schema as it stood before multi-use invitations.
+	goose.SetBaseFS(migrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatalf("set dialect: %v", err)
+	}
+	if err := goose.UpToContext(ctx, db, migrationsDir, 3); err != nil {
+		t.Fatalf("migrate to version 3: %v", err)
+	}
+
+	var hostID, guestID, eventID int
+	if err := db.QueryRowContext(ctx, `INSERT INTO users (username, email, password_hash)
+		VALUES ('ana', 'ana@example.com', 'x') RETURNING id`).Scan(&hostID); err != nil {
+		t.Fatalf("seed host: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `INSERT INTO users (username, email, password_hash)
+		VALUES ('bea', 'bea@example.com', 'x') RETURNING id`).Scan(&guestID); err != nil {
+		t.Fatalf("seed guest: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `INSERT INTO events (host_id, name) VALUES ($1, 'Legacy Awards') RETURNING id`,
+		hostID).Scan(&eventID); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO invitations (event_id, token, invited_by, redeemed_by, redeemed_at)
+		VALUES ($1, 'tok-old-used', $2, $3, now())`, eventID, hostID, guestID); err != nil {
+		t.Fatalf("seed redeemed invitation: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO invitations (event_id, token, invited_by)
+		VALUES ($1, 'tok-old-open', $2)`, eventID, hostID); err != nil {
+		t.Fatalf("seed outstanding invitation: %v", err)
+	}
+
+	if err := RunMigrations(ctx); err != nil {
+		t.Fatalf("upgrade a database with redemptions in it: %v", err)
+	}
+
+	invitations, err := ListInvitationsForEventFromDB(eventID)
+	if err != nil {
+		t.Fatalf("list invitations: %v", err)
+	}
+	byToken := map[string]Invitation{}
+	for _, inv := range invitations {
+		byToken[inv.Token] = inv
+	}
+
+	used, ok := byToken["tok-old-used"]
+	if !ok {
+		t.Fatal("the redeemed invitation did not survive the migration")
+	}
+	if used.Uses != 1 || len(used.Redemptions) != 1 || used.Redemptions[0].Username != "bea" {
+		t.Errorf("redeemed invitation = %+v, want one redemption by bea", used)
+	}
+	// Links issued before the migration keep the single-use promise they were
+	// created under.
+	if used.MaxUses == nil || *used.MaxUses != 1 {
+		t.Errorf("max_uses = %v, want 1 for an invitation issued before multi-use links", used.MaxUses)
+	}
+
+	open, ok := byToken["tok-old-open"]
+	if !ok {
+		t.Fatal("the outstanding invitation did not survive the migration")
+	}
+	if open.Uses != 0 || len(open.Redemptions) != 0 {
+		t.Errorf("outstanding invitation = %+v, want no redemptions", open)
+	}
+	if _, err := RedeemInvitationInDB("tok-old-open", guestID); err != nil {
+		t.Errorf("redeeming a pre-migration link: %v", err)
 	}
 }

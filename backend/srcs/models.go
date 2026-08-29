@@ -37,18 +37,26 @@ type EventMember struct {
 	IsHost   bool      `json:"is_host"`
 }
 
-// Invitation represents an invite to an event. A nil ExpiresAt means the
-// invitation never expires.
+// Invitation represents an invite to an event. Two fields carry "no limit" as
+// nil, following the same convention: a nil ExpiresAt never expires, and a nil
+// MaxUses admits any number of people — the link a host posts in a group chat.
 type Invitation struct {
-	ID                 int        `json:"id"`
-	EventID            int        `json:"event_id"`
-	Token              string     `json:"token"`
-	InvitedBy          int        `json:"invited_by"`
-	RedeemedBy         *int       `json:"redeemed_by,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	RedeemedAt         *time.Time `json:"redeemed_at,omitempty"`
-	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
-	RedeemedByUsername *string    `json:"redeemed_by_username,omitempty"`
+	ID          int                    `json:"id"`
+	EventID     int                    `json:"event_id"`
+	Token       string                 `json:"token"`
+	InvitedBy   int                    `json:"invited_by"`
+	CreatedAt   time.Time              `json:"created_at"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
+	MaxUses     *int                   `json:"max_uses,omitempty"`
+	Uses        int                    `json:"uses"`
+	Redemptions []InvitationRedemption `json:"redemptions,omitempty"`
+}
+
+// InvitationRedemption is one person a link admitted, as shown to the host.
+type InvitationRedemption struct {
+	UserID     int       `json:"user_id"`
+	Username   string    `json:"username"`
+	RedeemedAt time.Time `json:"redeemed_at"`
 }
 
 // Category represents a voting category within an event

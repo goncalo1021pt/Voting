@@ -3,3 +3,4 @@
 .env.*.local
 backend/events-server
 backups/
+backend/srcs/srcs
