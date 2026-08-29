@@ -173,8 +173,10 @@ func TestCORSSetsVaryOnAllowedOrigin(t *testing.T) {
 	}
 }
 
-// PUT was advertised but no route implements it.
-func TestCORSDoesNotAdvertisePUT(t *testing.T) {
+// The advertised methods have to track the routing table: PUT (edit an event)
+// and PATCH (rename yourself) are routed now, and a preflight that omits them
+// blocks a cross-origin caller from reaching either.
+func TestCORSAdvertisesRoutedMethods(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "https://vote.fontao.net")
 	InitAllowedOrigins()
 	t.Cleanup(func() { t.Setenv("ALLOWED_ORIGINS", ""); InitAllowedOrigins() })
@@ -184,8 +186,11 @@ func TestCORSDoesNotAdvertisePUT(t *testing.T) {
 	rec := httptest.NewRecorder()
 	CORSMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(rec, req)
 
-	if methods := rec.Header().Get("Access-Control-Allow-Methods"); strings.Contains(methods, "PUT") {
-		t.Errorf("Allow-Methods = %q, should not advertise PUT", methods)
+	methods := rec.Header().Get("Access-Control-Allow-Methods")
+	for _, want := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"} {
+		if !strings.Contains(methods, want) {
+			t.Errorf("Allow-Methods = %q, missing %s", methods, want)
+		}
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("preflight status = %d, want 204", rec.Code)

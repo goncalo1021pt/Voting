@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -135,4 +136,29 @@ func GetUserByIDFromDB(userID int) (*User, error) {
 		Username: username,
 		Email:    email,
 	}, nil
+}
+
+// UpdateUsernameInDB renames a user and returns the account as it now stands.
+//
+// Only the username moves: an account that signs in with Google keeps its
+// subject and its provider email, so the rename cannot be used to point an
+// identity somewhere else. Renaming to the name already held is a no-op that
+// succeeds — the row is its own, so the UNIQUE constraint has nothing to say
+// about it.
+func UpdateUsernameInDB(userID int, username string) (*User, error) {
+	var user User
+	err := db.QueryRow(
+		"UPDATE users SET username = $2 WHERE id = $1 RETURNING id, username, email",
+		userID, username,
+	).Scan(&user.ID, &user.Username, &user.Email)
+	if isUniqueViolation(err) {
+		return nil, ErrUsernameTaken
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to update username: %w", err)
+	}
+	return &user, nil
 }

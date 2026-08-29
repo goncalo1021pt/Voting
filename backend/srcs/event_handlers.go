@@ -82,6 +82,73 @@ func CreateEventHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(event)
 }
 
+// UpdateEventHandler replaces an existing event's details and its ballot.
+// Host-only. The body is the event as it should look afterwards — see
+// UpdateEventRequest — so this is a PUT rather than a PATCH.
+func UpdateEventHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authenticatedUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	eventID, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/events/"))
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	var req UpdateEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "Event name is required", http.StatusBadRequest)
+		return
+	}
+	if msg, ok := validateEventShape(req.createShape()); !ok {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if req.Visibility != "public" && req.Visibility != "invite-only" {
+		req.Visibility = "invite-only"
+	}
+	if req.ResultsVisibility == "" {
+		req.ResultsVisibility = "after_conclusion"
+	} else if req.ResultsVisibility != "after_conclusion" && req.ResultsVisibility != "live" {
+		http.Error(w, "results_visibility must be 'after_conclusion' or 'live'", http.StatusBadRequest)
+		return
+	}
+
+	event, err := UpdateEventInDB(eventID, userID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEventNotFound):
+			http.Error(w, "Event not found", http.StatusNotFound)
+		case errors.Is(err, ErrNotHost):
+			http.Error(w, "Only the host can edit this event", http.StatusForbidden)
+		case errors.Is(err, ErrCategoryNotFound):
+			http.Error(w, "Category not found in this event", http.StatusNotFound)
+		case errors.Is(err, ErrOptionNotFound):
+			http.Error(w, "Option not found in this category", http.StatusNotFound)
+		case errors.Is(err, ErrDuplicateEditRef):
+			http.Error(w, "The same category or option appears twice", http.StatusBadRequest)
+		case errors.Is(err, ErrCategoryHasVotes):
+			http.Error(w, "A category that already has votes cannot be removed", http.StatusConflict)
+		case errors.Is(err, ErrOptionHasVotes):
+			http.Error(w, "An option that already has votes cannot be removed", http.StatusConflict)
+		default:
+			serverError(w, r, "Failed to update event", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(event)
+}
+
 // redactEventForViewer strips members-only content from an invite-only event
 // when the viewer is neither the host nor a member. The remaining shell is
 // exactly what the frontend needs to render its access wall — name and state,
@@ -690,6 +757,29 @@ func validateEventShape(req CreateEventRequest) (string, bool) {
 		}
 	}
 	return "", true
+}
+
+// createShape projects an edit onto the create payload's shape so one
+// validator bounds both. Only the sizes matter here, so the ids the edit
+// carries are dropped.
+func (req UpdateEventRequest) createShape() CreateEventRequest {
+	shape := CreateEventRequest{
+		Name:        req.Name,
+		Description: req.Description,
+		Categories:  make([]CreateCategoryRequest, 0, len(req.Categories)),
+	}
+	for _, cat := range req.Categories {
+		names := make([]string, 0, len(cat.Options))
+		for _, opt := range cat.Options {
+			names = append(names, opt.Name)
+		}
+		shape.Categories = append(shape.Categories, CreateCategoryRequest{
+			Name:        cat.Name,
+			Description: cat.Description,
+			Options:     names,
+		})
+	}
+	return shape
 }
 
 // generateInvitationToken creates a random invitation token

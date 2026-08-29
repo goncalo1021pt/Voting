@@ -144,6 +144,46 @@ type CreateCategoryRequest struct {
 	Options     []string `json:"options"`
 }
 
+// UpdateEventRequest is the whole event as the host wants it to look after the
+// edit — not a patch. Anything omitted from Categories (or from a category's
+// Options) is removed, which is what lets the same form that created an event
+// also edit it.
+//
+// A category or option carrying an ID is the existing row, renamed in place;
+// one without is new. Keeping the ID matters: votes point at option rows, so a
+// rename must not become a delete-and-recreate.
+type UpdateEventRequest struct {
+	Name              string                  `json:"name"`
+	Description       string                  `json:"description"`
+	Visibility        string                  `json:"visibility"`
+	ResultsVisibility string                  `json:"results_visibility"`
+	RequireFullBallot bool                    `json:"require_full_ballot"`
+	Categories        []UpdateCategoryRequest `json:"categories"`
+}
+
+// UpdateCategoryRequest is one category in an UpdateEventRequest. A nil ID
+// means "create this one".
+type UpdateCategoryRequest struct {
+	ID          *int                  `json:"id"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Options     []UpdateOptionRequest `json:"options"`
+}
+
+// UpdateOptionRequest is one option in an UpdateCategoryRequest. A nil ID
+// means "create this one".
+type UpdateOptionRequest struct {
+	ID   *int   `json:"id"`
+	Name string `json:"name"`
+}
+
+// UpdateProfileRequest changes the caller's own account details. Username is
+// the only editable field, and it is a pointer so "not supplied" is
+// distinguishable from "set to empty" — the latter is an error, not a no-op.
+type UpdateProfileRequest struct {
+	Username *string `json:"username"`
+}
+
 // Vote request
 type VoteRequest struct {
 	CategoryID int `json:"category_id"`

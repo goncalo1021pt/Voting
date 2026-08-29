@@ -21,4 +21,19 @@ var (
 	ErrFullBallotRequired = errors.New("this event requires a complete ballot")
 	ErrDuplicateCategory  = errors.New("ballot has more than one vote for a category")
 	ErrBallotEmpty        = errors.New("ballot contains no votes")
+
+	// Editing an event may not silently discard ballots: options and
+	// categories cascade to votes, so removing one that has been voted on
+	// would rewrite a tally rather than correct a mistake.
+	ErrCategoryHasVotes = errors.New("category has votes and cannot be removed")
+	ErrOptionHasVotes   = errors.New("option has votes and cannot be removed")
+
+	// ErrDuplicateEditRef is the same existing category or option listed twice
+	// in one edit. The end state it asks for is ambiguous, so it is refused
+	// rather than resolved by whichever entry happens to be applied last.
+	ErrDuplicateEditRef = errors.New("the same category or option appears twice in the edit")
+
+	// ErrUsernameTaken is a rename losing to the UNIQUE(username) constraint.
+	ErrUsernameTaken = errors.New("username already taken")
+	ErrUserNotFound  = errors.New("user not found")
 )
