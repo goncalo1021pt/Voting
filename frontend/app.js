@@ -7,6 +7,7 @@
 //   #/events                      Events tab — discover view
 //   #/events/new                  create event (auth)
 //   #/events/:id                  event detail
+//   #/events/:id/edit             edit event (host)
 //   #/events/:id/results          all-categories results
 //   #/events/:id/results/:catId   single-category results
 //   #/invitations/:token          redeem invite (auth)
@@ -85,11 +86,13 @@ const API = {
     register: (body) => api("POST", "/auth/register", body),
     login: (body) => api("POST", "/auth/login", body),
     logout: () => api("POST", "/auth/logout"),
+    updateProfile: (body) => api("PATCH", "/auth/me", body),
     authConfig: () => api("GET", "/auth/config"),
     googleExchange: (code) => api("POST", "/auth/google/exchange", { code }),
     listEvents: () => api("GET", "/events"),
     getEvent: (id) => api("GET", `/events/${id}`),
     createEvent: (body) => api("POST", "/events", body),
+    updateEvent: (id, body) => api("PUT", `/events/${id}`, body),
     closeEvent: (id) => api("POST", `/events/${id}/close`),
     joinEvent: (id) => api("POST", `/events/${id}/join`),
     createInvitation: (eventId, body) => api("POST", `/events/${eventId}/invitations`, body),
@@ -518,6 +521,7 @@ const routes = [
     { pattern: /^#?\/events\/new$/, view: viewCreateEvent, requireAuth: true },
     { pattern: /^#?\/events\/(\d+)\/results\/(\d+)$/, view: viewResults, params: ["eventId", "categoryId"], skeleton: "results" },
     { pattern: /^#?\/events\/(\d+)\/results$/, view: viewAllResults, params: ["eventId"], skeleton: "results" },
+    { pattern: /^#?\/events\/(\d+)\/edit$/, view: viewEditEvent, params: ["eventId"], requireAuth: true, skeleton: "detail" },
     { pattern: /^#?\/events\/(\d+)$/, view: viewEvent, params: ["eventId"], skeleton: "detail" },
     { pattern: /^#?\/invitations\/([^/]+)$/, view: viewRedeemInvitation, params: ["token"], requireAuth: true },
     { pattern: /^#?\/profile$/, view: viewProfile, requireAuth: true, skeleton: "list" },
@@ -841,25 +845,59 @@ function eventCard(e, opts = {}) {
     return el("a", { class: "card", href: `#/events/${e.id}` }, body);
 }
 
-// ---------- Create event ----------
+// ---------- Ballot editor ----------
 
-async function viewCreateEvent() {
-    document.querySelector("main").classList.add("wide");
+// The category-and-options builder behind both "host an event" and "edit
+// event". The only difference between the two is that an edit is seeded with
+// the categories already stored, each carrying its id — the server then renames
+// that row in place instead of replacing it, which is what lets votes already
+// cast on an option survive the edit.
+//
+// `locked` carries the ids the server will refuse to delete because votes
+// already point at them (see viewEditEvent): their remove buttons are disabled
+// rather than left to fail on save.
+//
+// Returns { container, addCategory, collect }. collect() throws an Error whose
+// message is written to be shown to the user.
+function ballotEditor(seedCategories = [], locked = { categories: new Set(), options: new Set() }) {
+    let categoryCount = 0;
+    const container = el("div", { id: "categories" });
 
-    let categoryCount = 1;
-    const categoriesContainer = el("div", { id: "categories" });
+    // `seed` may carry an id (an existing option) and a name.
+    function makeOptionRow(seed = {}) {
+        const input = el("input", {
+            class: "option-name",
+            placeholder: "Option name",
+            required: true,
+            value: seed.name ?? "",
+        });
+        if (seed.id != null) input.dataset.optionId = String(seed.id);
+        const isLocked = seed.id != null && locked.options.has(seed.id);
+        const row = el("div", { class: "option-row" });
+        row.appendChild(input);
+        row.appendChild(el("button", {
+            type: "button",
+            class: "secondary",
+            disabled: isLocked,
+            title: isLocked ? "This option has votes — it can be renamed, but not removed" : "Remove this option",
+            onClick: () => row.remove(),
+        }, "×"));
+        return row;
+    }
 
-    // Build a category block. `prefill` optionally seeds the name and option
-    // values. "Duplicate" uses it to clone a category's options under a blank
-    // name, so repeated nominee lists only get typed once.
-    function makeCategoryBlock(prefill) {
-        const idx = categoryCount++;
+    // Build a category block. `seed` optionally fills in the id, name,
+    // description and options. "Duplicate" uses it to clone a category's
+    // options under a blank name, so repeated nominee lists only get typed
+    // once — deliberately without ids, since a duplicate is a new category
+    // rather than a second view of the same one.
+    function makeCategoryBlock(seed = {}) {
+        const idx = ++categoryCount;
         const optionsContainer = el("div", { class: "options" });
 
         const duplicate = () => {
             const options = Array.from(optionsContainer.querySelectorAll(".option-name"))
-                .map((i) => i.value.trim())
-                .filter(Boolean);
+                .map((i) => ({ name: i.value.trim() }))
+                .filter((o) => o.name);
             const clone = makeCategoryBlock({ name: "", options });
             block.after(clone);
             clone.querySelector("input[name^='cat-']").focus();
@@ -878,12 +916,16 @@ async function viewCreateEvent() {
                     el("button", {
                         type: "button",
                         class: "link",
+                        disabled: seed.id != null && locked.categories.has(seed.id),
+                        title: seed.id != null && locked.categories.has(seed.id)
+                            ? "This category has votes — it can be renamed, but not removed"
+                            : "Remove this category",
                         onClick: () => block.remove(),
                     }, "Remove"),
                 ]),
             ]),
-            el("label", {}, ["Name", el("input", { name: `cat-${idx}-name`, required: true, placeholder: "e.g. Game of the Year", value: prefill?.name ?? "" })]),
-            el("label", {}, ["Description", el("input", { class: "category-description", placeholder: "Optional — e.g. Indie or AA, released this year" })]),
+            el("label", {}, ["Name", el("input", { name: `cat-${idx}-name`, required: true, placeholder: "e.g. Game of the Year", value: seed.name ?? "" })]),
+            el("label", {}, ["Description", el("input", { class: "category-description", placeholder: "Optional — e.g. Indie or AA, released this year", value: seed.description ?? "" })]),
             el("p", { class: "eyebrow", style: "margin-top:8px;" }, "Options"),
             optionsContainer,
             el("button", {
@@ -892,24 +934,56 @@ async function viewCreateEvent() {
                 onClick: () => optionsContainer.appendChild(makeOptionRow()),
             }, "+ Add option"),
         ]);
+        if (seed.id != null) block.dataset.categoryId = String(seed.id);
 
-        const seed = prefill?.options?.length ? prefill.options : ["", ""];
-        for (const value of seed) optionsContainer.appendChild(makeOptionRow(value));
+        const options = seed.options?.length ? seed.options : [{}, {}];
+        for (const option of options) optionsContainer.appendChild(makeOptionRow(option));
         return block;
     }
 
     function addCategory() {
-        categoriesContainer.appendChild(makeCategoryBlock());
+        container.appendChild(makeCategoryBlock());
     }
 
-    function makeOptionRow(value = "") {
-        const row = el("div", { class: "option-row" });
-        const input = el("input", { class: "option-name", placeholder: "Option name", required: true, value });
-        const remove = el("button", { type: "button", class: "secondary", onClick: () => row.remove() }, "×");
-        row.appendChild(input);
-        row.appendChild(remove);
-        return row;
+    // Reads the form back out. Ids ride along as `undefined` when the row is
+    // new, and JSON.stringify drops those — which is exactly how the server
+    // tells "insert this" from "rename that".
+    function collect() {
+        const categories = [];
+        for (const block of container.querySelectorAll(".category-block")) {
+            const name = block.querySelector("input[name^='cat-']").value.trim();
+            if (!name) continue;
+            const description = block.querySelector(".category-description").value.trim();
+            const options = Array.from(block.querySelectorAll(".option-name"))
+                .map((input) => ({
+                    id: input.dataset.optionId ? Number(input.dataset.optionId) : undefined,
+                    name: input.value.trim(),
+                }))
+                .filter((option) => option.name);
+            if (options.length < 2) throw new Error(`Category "${name}" needs at least 2 options`);
+            categories.push({
+                id: block.dataset.categoryId ? Number(block.dataset.categoryId) : undefined,
+                name,
+                description,
+                options,
+            });
+        }
+        if (categories.length === 0) throw new Error("Add at least one category");
+        return categories;
     }
+
+    for (const category of seedCategories) container.appendChild(makeCategoryBlock(category));
+    if (!container.children.length) addCategory();
+
+    return { container, addCategory, collect };
+}
+
+// ---------- Create event ----------
+
+async function viewCreateEvent() {
+    document.querySelector("main").classList.add("wide");
+
+    const editor = ballotEditor();
 
     const form = el("form", {
         class: "wide",
@@ -920,22 +994,20 @@ async function viewCreateEvent() {
             const visibility = form.elements["visibility"].value;
             const resultsVisibility = form.elements["results_visibility"].value;
             const requireFullBallot = form.elements["require_full_ballot"].checked;
-            const categories = [];
-            for (const block of categoriesContainer.querySelectorAll(".category-block")) {
-                const catName = block.querySelector("input[name^='cat-']").value.trim();
-                if (!catName) continue;
-                const catDescription = block.querySelector(".category-description").value.trim();
-                const options = Array.from(block.querySelectorAll(".option-name"))
-                    .map((i) => i.value.trim())
-                    .filter(Boolean);
-                if (options.length < 2) {
-                    toast(`Category "${catName}" needs at least 2 options`, "error");
-                    return;
-                }
-                categories.push({ name: catName, description: catDescription, options });
-            }
             if (!name) { toast("Event name required", "error"); return; }
-            if (categories.length === 0) { toast("Add at least one category", "error"); return; }
+            let categories;
+            try {
+                // Creating an event has no rows to keep, so the ids the editor
+                // tracks are dropped and each category takes plain option names.
+                categories = editor.collect().map((cat) => ({
+                    name: cat.name,
+                    description: cat.description,
+                    options: cat.options.map((opt) => opt.name),
+                }));
+            } catch (err) {
+                toast(err.message, "error");
+                return;
+            }
             try {
                 const created = await API.createEvent({
                     name, description, visibility,
@@ -971,17 +1043,15 @@ async function viewCreateEvent() {
             "Require voters to fill all categories before submitting",
         ]),
         el("h2", {}, "Categories"),
-        categoriesContainer,
+        editor.container,
         el("div", { class: "button-row" }, [
-            el("button", { type: "button", class: "secondary", onClick: addCategory }, "+ Add category"),
+            el("button", { type: "button", class: "secondary", onClick: editor.addCategory }, "+ Add category"),
         ]),
         el("div", { class: "button-row" }, [
             el("button", { type: "submit" }, "Create event"),
             el("a", { class: "btn secondary", href: "#/events" }, "Cancel"),
         ]),
     ]);
-
-    addCategory();
 
     // Hidden file input wired to the visible "Choose file" button.
     const fileInput = el("input", {
@@ -1051,6 +1121,124 @@ async function viewCreateEvent() {
         el("h1", {}, "Host an event."),
         importCard,
         el("p", { class: "muted divider-note" }, "— or fill in the form below —"),
+        form,
+    );
+}
+
+// ---------- Edit event ----------
+
+// The host's second pass over an event that already exists. The form is the
+// create form seeded with what is stored, and it submits the event as it
+// should end up — categories and options left out are removed.
+//
+// Two things it deliberately cannot do, both for the same reason: an option
+// that has been voted on can be renamed but not deleted, and an option cannot
+// be moved to another category. Votes point at these rows, and either move
+// would quietly rewrite a tally rather than correct a mistake. The server
+// refuses both; the note below says so before the host loses their edits to a
+// 409.
+async function viewEditEvent({ eventId }) {
+    document.querySelector("main").classList.add("wide");
+
+    const event = await API.getEvent(eventId);
+    if (!auth.user || event.host_id !== auth.user.id) {
+        toast("Only the host can edit this event", "error");
+        navigate(`#/events/${eventId}`);
+        return;
+    }
+
+    // Which rows the server will refuse to delete. The host can always read
+    // an event's results, and that is where the per-option tallies live — so
+    // the form can disable those remove buttons up front instead of letting
+    // the host rebuild a ballot only to lose the save to a 409. Best-effort:
+    // if the tallies can't be fetched the buttons stay live and the server
+    // still refuses the removal.
+    const locked = { categories: new Set(), options: new Set() };
+    try {
+        const results = await API.getAllResults(eventId);
+        for (const cat of results.categories || []) {
+            if (cat.total_votes > 0) locked.categories.add(cat.category_id);
+            for (const result of cat.results || []) {
+                if (result.votes > 0) locked.options.add(result.option_id);
+            }
+        }
+    } catch {
+        // Nothing locked; saving still can't drop a voted row.
+    }
+
+    const editor = ballotEditor(event.categories || [], locked);
+
+    const form = el("form", {
+        class: "wide",
+        onSubmit: async (e) => {
+            e.preventDefault();
+            const name = form.elements["name"].value.trim();
+            if (!name) { toast("Event name required", "error"); return; }
+
+            let categories;
+            try {
+                categories = editor.collect();
+            } catch (err) {
+                toast(err.message, "error");
+                return;
+            }
+
+            try {
+                await API.updateEvent(event.id, {
+                    name,
+                    description: form.elements["description"].value.trim(),
+                    visibility: form.elements["visibility"].value,
+                    results_visibility: form.elements["results_visibility"].value,
+                    require_full_ballot: form.elements["require_full_ballot"].checked,
+                    categories,
+                });
+                toast("Changes saved", "success");
+                navigate(`#/events/${event.id}`);
+            } catch (err) {
+                toast(err.message || "Failed to save changes", "error");
+            }
+        },
+    }, [
+        el("label", {}, ["Event name", el("input", { name: "name", required: true, value: event.name })]),
+        el("label", {}, ["Description", el("textarea", { name: "description" }, event.description || "")]),
+        el("label", {}, [
+            "Visibility",
+            el("select", { name: "visibility" }, [
+                el("option", { value: "invite-only", selected: event.visibility !== "public" }, "Invite-only"),
+                el("option", { value: "public", selected: event.visibility === "public" }, "Public"),
+            ]),
+        ]),
+        el("label", {}, [
+            "Results visibility",
+            el("select", { name: "results_visibility" }, [
+                el("option", { value: "after_conclusion", selected: event.results_visibility !== "live" }, "After event closes (default)"),
+                el("option", { value: "live", selected: event.results_visibility === "live" }, "Live"),
+            ]),
+        ]),
+        el("label", { class: "checkbox-label" }, [
+            el("input", { type: "checkbox", name: "require_full_ballot", checked: !!event.require_full_ballot }),
+            "Require voters to fill all categories before submitting",
+        ]),
+        el("h2", {}, "Categories"),
+        el("p", { class: "muted" },
+            "Renaming a category or an option keeps the votes already cast on it. " +
+            "Anything that has been voted on can no longer be removed, so its × is greyed out."),
+        editor.container,
+        el("div", { class: "button-row" }, [
+            el("button", { type: "button", class: "secondary", onClick: editor.addCategory }, "+ Add category"),
+        ]),
+        el("div", { class: "button-row" }, [
+            el("button", { type: "submit" }, "Save changes"),
+            el("a", { class: "btn secondary", href: `#/events/${event.id}` }, "Cancel"),
+        ]),
+    ]);
+
+    render(
+        el("p", { class: "eyebrow" }, "Edit event"),
+        el("h1", {}, event.name),
+        !event.is_active
+            ? el("p", { class: "muted" }, "This event is closed. Edits still apply, but nobody can vote on them.")
+            : null,
         form,
     );
 }
@@ -1317,6 +1505,10 @@ async function viewEvent({ eventId }) {
                         catch (err) { toast(err.message || "Failed to join", "error"); }
                     },
                 }, "Join event") : null,
+            isHost ? el("a", {
+                class: "btn secondary",
+                href: `#/events/${event.id}/edit`,
+            }, "Edit event") : null,
             isHost && event.is_active ? el("button", {
                 class: "danger",
                 onClick: async () => {
@@ -1577,6 +1769,53 @@ async function viewRedeemInvitation({ token }) {
 
 // ---------- Profile ----------
 
+// Renaming yourself. The name a Google sign-in generates is derived from the
+// email address, which is rarely what anyone wants to be called, so this is
+// offered to every account regardless of how it signs in.
+async function promptRename() {
+    const current = auth.user?.username || "";
+    const input = el("input", {
+        value: current,
+        maxlength: "32",
+        "aria-label": "Your name",
+        onKeyDown: (e) => {
+            // The dialog is not a form, so Enter would otherwise do nothing.
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            e.target.closest(".modal").querySelector(".button-row button").click();
+        },
+    });
+
+    const pending = dialog({
+        eyebrow: "Profile",
+        title: "Change your name",
+        body: el("div", {}, [
+            el("p", { class: "modal-body" },
+                "This is the name other people see on member lists, invitations and results."),
+            el("label", {}, ["Name", input]),
+        ]),
+        confirm: "Save name",
+    });
+    // dialog() focuses its confirm button as it opens; the field is the thing
+    // to type in, so take the focus back before waiting on the answer.
+    input.focus();
+    input.select();
+    if (!await pending) return;
+
+    const username = input.value.trim();
+    if (!username || username === current) return;
+
+    try {
+        const user = await API.updateProfile({ username });
+        auth.set(auth.token, user);
+        renderTopbar();
+        toast("Name updated", "success");
+        router();
+    } catch (err) {
+        toast(err.message || "Could not change your name", "error");
+    }
+}
+
 async function viewProfile() {
     document.querySelector("main").classList.remove("narrow");
     const user = auth.user;
@@ -1601,7 +1840,8 @@ async function viewProfile() {
             el("h1", {}, user?.username || ""),
             el("p", { class: "muted" }, user?.email || ""),
         ]),
-        el("div", { style: "margin-left:auto;" }, [
+        el("div", { class: "button-row profile-actions" }, [
+            el("button", { class: "secondary", onClick: promptRename }, "Change name"),
             el("button", {
                 class: "secondary",
                 onClick: async () => {

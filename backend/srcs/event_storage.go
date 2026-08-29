@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // GetEventsFromDB retrieves all public events and events the user is part of.
@@ -870,4 +872,208 @@ func JoinPublicEventInDB(eventID, userID int) error {
 		return fmt.Errorf("failed to add event member: %w", err)
 	}
 	return nil
+}
+
+// UpdateEventInDB rewrites an event's details and its whole ballot to match
+// what the host submitted. Only the host may edit.
+//
+// The payload is the desired end state, not a diff: a category or option
+// carrying an id is updated in place, one without an id is inserted, and
+// anything the host left out is deleted. Deletion is the part that needs care —
+// categories and options cascade to votes — so a row somebody has already voted
+// on is refused outright rather than quietly taking ballots with it.
+//
+// The whole edit is one transaction: a half-applied rewrite would leave voters
+// looking at a ballot nobody chose, mid-event.
+func UpdateEventInDB(eventID, userID int, req UpdateEventRequest) (*Event, error) {
+	// Same default CreateEventInDB applies, so a caller that omits the field
+	// gets the safe setting rather than a CHECK constraint violation.
+	if req.ResultsVisibility == "" {
+		req.ResultsVisibility = "after_conclusion"
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// FOR UPDATE so two edits of the same event serialise instead of
+	// interleaving their category rewrites.
+	var hostID int
+	err = tx.QueryRow("SELECT host_id FROM events WHERE id = $1 FOR UPDATE", eventID).Scan(&hostID)
+	if err == sql.ErrNoRows {
+		return nil, ErrEventNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up event: %w", err)
+	}
+	if hostID != userID {
+		return nil, ErrNotHost
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE events
+		SET name = $2, description = $3, visibility = $4, results_visibility = $5, require_full_ballot = $6
+		WHERE id = $1`,
+		eventID, req.Name, req.Description, req.Visibility, req.ResultsVisibility, req.RequireFullBallot,
+	); err != nil {
+		return nil, fmt.Errorf("failed to update event: %w", err)
+	}
+
+	existingCategories, existingOptions, err := ballotRowIDs(tx, eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	keptCategories := map[int]bool{}
+	keptOptions := map[int]bool{}
+
+	for _, cat := range req.Categories {
+		categoryID := 0
+		if cat.ID != nil {
+			if !existingCategories[*cat.ID] {
+				return nil, ErrCategoryNotFound
+			}
+			if keptCategories[*cat.ID] {
+				return nil, ErrDuplicateEditRef
+			}
+			if _, err := tx.Exec(
+				"UPDATE categories SET name = $2, description = $3 WHERE id = $1",
+				*cat.ID, cat.Name, cat.Description,
+			); err != nil {
+				return nil, fmt.Errorf("failed to update category: %w", err)
+			}
+			categoryID = *cat.ID
+			keptCategories[categoryID] = true
+		} else if err := tx.QueryRow(
+			"INSERT INTO categories (event_id, name, description) VALUES ($1, $2, $3) RETURNING id",
+			eventID, cat.Name, cat.Description,
+		).Scan(&categoryID); err != nil {
+			return nil, fmt.Errorf("failed to create category: %w", err)
+		}
+
+		for _, opt := range cat.Options {
+			if opt.ID == nil {
+				if _, err := tx.Exec(
+					"INSERT INTO options (category_id, name) VALUES ($1, $2)",
+					categoryID, opt.Name,
+				); err != nil {
+					return nil, fmt.Errorf("failed to create option: %w", err)
+				}
+				continue
+			}
+			// An option may be renamed but not moved: its votes are recorded
+			// against both the option and its category, so re-parenting one
+			// would file existing ballots under a category nobody cast them in.
+			if existingOptions[*opt.ID] != categoryID {
+				return nil, ErrOptionNotFound
+			}
+			if keptOptions[*opt.ID] {
+				return nil, ErrDuplicateEditRef
+			}
+			if _, err := tx.Exec("UPDATE options SET name = $2 WHERE id = $1", *opt.ID, opt.Name); err != nil {
+				return nil, fmt.Errorf("failed to update option: %w", err)
+			}
+			keptOptions[*opt.ID] = true
+		}
+	}
+
+	// Removals, categories first. A dropped category takes its options with it
+	// (ON DELETE CASCADE), so checking votes by category covers those options
+	// too — and is why the per-option sweep below only looks at categories that
+	// survived.
+	var droppedCategories []int
+	for id := range existingCategories {
+		if !keptCategories[id] {
+			droppedCategories = append(droppedCategories, id)
+		}
+	}
+	if len(droppedCategories) > 0 {
+		var votes int
+		if err := tx.QueryRow(
+			"SELECT COUNT(*) FROM votes WHERE category_id = ANY($1)", pq.Array(droppedCategories),
+		).Scan(&votes); err != nil {
+			return nil, fmt.Errorf("failed to check category votes: %w", err)
+		}
+		if votes > 0 {
+			return nil, ErrCategoryHasVotes
+		}
+		if _, err := tx.Exec("DELETE FROM categories WHERE id = ANY($1)", pq.Array(droppedCategories)); err != nil {
+			return nil, fmt.Errorf("failed to delete categories: %w", err)
+		}
+	}
+
+	var droppedOptions []int
+	for id, categoryID := range existingOptions {
+		if keptCategories[categoryID] && !keptOptions[id] {
+			droppedOptions = append(droppedOptions, id)
+		}
+	}
+	if len(droppedOptions) > 0 {
+		var votes int
+		if err := tx.QueryRow(
+			"SELECT COUNT(*) FROM votes WHERE option_id = ANY($1)", pq.Array(droppedOptions),
+		).Scan(&votes); err != nil {
+			return nil, fmt.Errorf("failed to check option votes: %w", err)
+		}
+		if votes > 0 {
+			return nil, ErrOptionHasVotes
+		}
+		if _, err := tx.Exec("DELETE FROM options WHERE id = ANY($1)", pq.Array(droppedOptions)); err != nil {
+			return nil, fmt.Errorf("failed to delete options: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return GetEventFromDB(eventID)
+}
+
+// ballotRowIDs reads an event's current ballot skeleton: the set of category
+// ids, and each option id mapped to the category that owns it. The edit needs
+// both to tell an update from an insert, and to spot ids that belong to some
+// other event.
+func ballotRowIDs(tx *sql.Tx, eventID int) (map[int]bool, map[int]int, error) {
+	categories := map[int]bool{}
+	rows, err := tx.Query("SELECT id FROM categories WHERE event_id = $1", eventID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch categories: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, nil, fmt.Errorf("failed to scan category id: %w", err)
+		}
+		categories[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("category rows error: %w", err)
+	}
+
+	options := map[int]int{}
+	optRows, err := tx.Query(`
+		SELECT o.id, o.category_id
+		FROM options o
+		JOIN categories c ON c.id = o.category_id
+		WHERE c.event_id = $1`, eventID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch options: %w", err)
+	}
+	defer optRows.Close()
+	for optRows.Next() {
+		var id, categoryID int
+		if err := optRows.Scan(&id, &categoryID); err != nil {
+			return nil, nil, fmt.Errorf("failed to scan option id: %w", err)
+		}
+		options[id] = categoryID
+	}
+	if err := optRows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("option rows error: %w", err)
+	}
+
+	return categories, options, nil
 }

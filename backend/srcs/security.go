@@ -131,8 +131,11 @@ func CORSMiddleware(next http.Handler) http.Handler {
 			// The response varies by Origin, so caches must not reuse one
 			// origin's response for another.
 			h.Add("Vary", "Origin")
-			// PUT is deliberately absent: no route implements it.
-			h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			// Exactly the methods RouteHandler implements: PUT edits an
+			// event, PATCH renames the caller. Advertising one that no route
+			// serves invites a preflight the request then fails; omitting one
+			// that does blocks a legitimate cross-origin call outright.
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			// So a cross-origin caller can still read the ID to quote in a
 			// bug report; response headers are otherwise hidden from JS.

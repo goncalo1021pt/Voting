@@ -116,6 +116,11 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		LogoutHandler(w, r)
 	case path == "/auth/me" && r.Method == "GET":
 		RequireAuth(MeHandler)(w, r)
+	// Renaming yourself. Rate limited per user (RequireAuth runs first, so
+	// limitKey resolves to the caller) — a rename answers 409 on a name that
+	// is taken, and that is an enumeration oracle worth metering.
+	case path == "/auth/me" && r.Method == "PATCH":
+		RequireAuth(RateLimit(authLimiter, UpdateMeHandler))(w, r)
 
 	// Which sign-in methods this deployment offers.
 	case path == "/auth/config" && r.Method == "GET":
@@ -152,6 +157,10 @@ func RouteHandler(w http.ResponseWriter, r *http.Request) {
 		RequireAuth(CloseEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && strings.HasSuffix(path, "/ballot") && r.Method == "POST":
 		RequireAuth(RateLimit(votingLimiter, RecordBallotHandler))(w, r)
+	// An edit rewrites the whole ballot, so it can write as much as a create
+	// and shares its budget.
+	case isExactEventPath(path) && r.Method == "PUT":
+		RequireAuth(RateLimit(createEventLimiter, UpdateEventHandler))(w, r)
 	case isExactEventPath(path) && r.Method == "DELETE":
 		RequireAuth(DeleteEventHandler)(w, r)
 	case strings.HasPrefix(path, "/events/") && r.Method == "GET":

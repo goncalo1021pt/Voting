@@ -10,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -33,6 +35,39 @@ func normalizeEmail(raw string) (string, bool) {
 		return "", false
 	}
 	return email, true
+}
+
+// Bounds on a username the user picks for themselves. The column holds 255
+// characters; the tighter cap here is about the name staying readable in a
+// member list and an avatar bubble.
+const (
+	minUsernameLen = 3
+	maxUsernameLen = 32
+)
+
+// usernameShape is what a chosen name may look like: letters, digits, and
+// interior spaces, dots, underscores or hyphens, starting and ending on a
+// letter or digit.
+//
+// It is deliberately wider than what generateUsername derives from a Google
+// profile — the point of letting people rename is that "goncalo1021pt" is a
+// mailbox, not a name they'd introduce themselves by — while still narrow
+// enough that a name cannot be padded out of shape or dressed up to read as
+// something it is not.
+var usernameShape = regexp.MustCompile(`^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$`)
+
+// normalizeUsername trims the name and collapses runs of whitespace, then
+// reports whether what is left is acceptable. The second return value is the
+// reason to show the user when it is not.
+func normalizeUsername(raw string) (string, string, bool) {
+	username := strings.Join(strings.Fields(raw), " ")
+	if n := utf8.RuneCountInString(username); n < minUsernameLen || n > maxUsernameLen {
+		return "", fmt.Sprintf("Username must be between %d and %d characters", minUsernameLen, maxUsernameLen), false
+	}
+	if !usernameShape.MatchString(username) {
+		return "", "Username may contain letters, digits, spaces, dots, underscores and hyphens, and must start and end with a letter or digit", false
+	}
+	return username, "", true
 }
 
 // RegisterHandler handles user registration
@@ -226,6 +261,53 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// UpdateMeHandler changes the caller's own account details. The username is
+// the only field it touches.
+//
+// It works the same for a Google account as for a password one: the name
+// derived from a Google profile at first sign-in is a starting point, not
+// something the person is stuck with. Nothing else about the identity moves —
+// the Google subject and the email stay as the provider gave them.
+func UpdateMeHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authenticatedUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req UpdateProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Username == nil {
+		http.Error(w, "No changes requested", http.StatusBadRequest)
+		return
+	}
+
+	username, reason, ok := normalizeUsername(*req.Username)
+	if !ok {
+		http.Error(w, reason, http.StatusBadRequest)
+		return
+	}
+
+	user, err := UpdateUsernameInDB(userID, username)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrUsernameTaken):
+			http.Error(w, "That username is already taken", http.StatusConflict)
+		case errors.Is(err, ErrUserNotFound):
+			http.Error(w, "User not found", http.StatusNotFound)
+		default:
+			serverError(w, r, "Failed to update username", err)
+		}
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
 }

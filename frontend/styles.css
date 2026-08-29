@@ -917,6 +917,11 @@ button:disabled, .btn:disabled {
     margin: 0;
 }
 
+/* Pushed to the far end of the hero, opposite the avatar. */
+.profile-hero .profile-actions {
+    margin-left: auto;
+}
+
 /* ==========================================================================
    Modal dialog
    ========================================================================== */
@@ -1152,6 +1157,17 @@ main > .skeleton {
     body.is-home .topbar nav,
     body.is-events .topbar nav {
         display: none;
+    }
+    /* The hero carries two actions now — renaming yourself and logging out.
+       Beside an 84px avatar they have nowhere to go at this width, so let the
+       hero wrap and give them a full row underneath. */
+    .profile-hero {
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+    .profile-hero .profile-actions {
+        margin-left: 0;
+        width: 100%;
     }
     main {
         padding: 32px 18px 64px;
