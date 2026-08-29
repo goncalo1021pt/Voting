@@ -1274,24 +1274,46 @@ function buildInvitationsCard(eventId) {
             return;
         }
         invites.forEach((inv) => {
-            const isRedeemed = inv.redeemed_by != null;
+            // max_uses absent means the link is unlimited — the one a host
+            // posts in a group chat. Otherwise it admits that many people.
+            const unlimited = inv.max_uses == null;
+            const maxUses = unlimited ? Infinity : inv.max_uses;
+            const uses = inv.uses || 0;
+            const usedUp = uses >= maxUses;
             const timeLeft = inv.expires_at ? formatTimeLeft(inv.expires_at) : null;
-            const isExpired = !isRedeemed && inv.expires_at && timeLeft === null;
+            const isExpired = !usedUp && inv.expires_at && timeLeft === null;
+            const usable = !usedUp && !isExpired;
             const link = `${location.origin}/#/invitations/${inv.token}`;
+
+            // Who came through the link, for the tag's tooltip.
+            const joiners = (inv.redemptions || []).map((r) => `@${r.username}`).join(", ");
+
+            const kindTag = unlimited
+                ? el("span", { class: "tag accent" }, "unlimited")
+                : maxUses > 1
+                    ? el("span", { class: "tag subtle", title: joiners || undefined }, `${uses} of ${maxUses} used`)
+                    : null;
+
             let statusTag;
-            if (isRedeemed) {
-                statusTag = el("span", { class: "tag subtle" }, `redeemed by @${inv.redeemed_by_username || "unknown"}`);
+            if (usedUp && maxUses === 1) {
+                statusTag = el("span", { class: "tag subtle" }, `redeemed by ${joiners || "someone"}`);
             } else if (isExpired) {
                 statusTag = el("span", { class: "tag danger" }, "expired");
+            } else if (usedUp) {
+                statusTag = el("span", { class: "tag subtle" }, "used up");
+            } else if (unlimited && uses > 0) {
+                statusTag = el("span", { class: "tag success", title: joiners },
+                    uses === 1 ? "1 person joined" : `${uses} people joined`);
             } else {
                 statusTag = el("span", { class: "tag success" }, "outstanding");
             }
-            const expiryTag = !isRedeemed && !isExpired && timeLeft
+
+            const expiryTag = usable && timeLeft
                 ? el("span", { class: "tag subtle" }, `expires in ${timeLeft}`)
                 : null;
 
             const actions = el("div", { class: "button-row" }, [
-                !isRedeemed && !isExpired ? el("button", {
+                usable ? el("button", {
                     class: "secondary",
                     onClick: async () => {
                         try {
@@ -1302,13 +1324,15 @@ function buildInvitationsCard(eventId) {
                         }
                     },
                 }, "Copy link") : null,
-                !isRedeemed ? el("button", {
+                el("button", {
                     class: "danger",
                     onClick: async () => {
                         const ok = await dialog({
                             eyebrow: "Host action",
                             title: "Revoke this invitation?",
-                            body: "Anyone holding this link will no longer be able to join.",
+                            body: uses > 0
+                                ? "Nobody else will be able to join through this link. Anyone who already joined stays a member."
+                                : "Anyone holding this link will no longer be able to join.",
                             confirm: "Revoke",
                             danger: true,
                         });
@@ -1321,12 +1345,13 @@ function buildInvitationsCard(eventId) {
                             toast(err.message || "Failed to revoke", "error");
                         }
                     },
-                }, "Revoke") : null,
+                }, "Revoke"),
             ]);
 
             const row = el("div", { class: "invitation-row" }, [
                 el("div", { class: "invitation-row-main" }, [
                     el("code", { class: "invitation-token" }, shortToken(inv.token)),
+                    kindTag,
                     statusTag,
                     expiryTag,
                 ]),
@@ -1354,15 +1379,27 @@ function buildInvitationsCard(eventId) {
         el("option", { value: "168" }, "Expires in 7 days"),
     ]);
 
+    // Single use is the default: a link that admits everyone who reads it is
+    // the right tool for a group chat and the wrong one to hand to one person.
+    const usesSelect = el("select", { "aria-label": "How many people this invitation admits" }, [
+        el("option", { value: "1" }, "Single use"),
+        el("option", { value: "unlimited" }, "Unlimited — share in a group"),
+    ]);
+
     const createBtn = el("button", {
         class: "secondary",
         onClick: async () => {
             try {
                 const hours = parseInt(expirySelect.value, 10);
-                const inv = await API.createInvitation(eventId, hours ? { expires_in_hours: hours } : undefined);
+                const unlimited = usesSelect.value === "unlimited";
+                // null is how the API spells "no maximum", the same way an
+                // absent expiry spells "never expires".
+                const body = { max_uses: unlimited ? null : 1 };
+                if (hours) body.expires_in_hours = hours;
+                const inv = await API.createInvitation(eventId, body);
                 const link = `${location.origin}/#/invitations/${inv.token}`;
                 try { await navigator.clipboard.writeText(link); } catch {}
-                toast(`Invite link copied: ${link}`, "success");
+                toast(`${unlimited ? "Unlimited invite" : "Invite"} link copied: ${link}`, "success");
                 reload();
             } catch (err) {
                 toast(err.message || "Failed to create invite", "error");
@@ -1376,7 +1413,7 @@ function buildInvitationsCard(eventId) {
                 el("p", { class: "eyebrow" }, "Invitations"),
                 el("h2", { style: "margin:0;" }, "Invite people"),
             ]),
-            el("div", { class: "button-row" }, [expirySelect, createBtn]),
+            el("div", { class: "button-row" }, [usesSelect, expirySelect, createBtn]),
         ]),
         listMount,
     ]);
@@ -1753,7 +1790,14 @@ async function viewRedeemInvitation({ token }) {
     render(el("p", { class: "muted" }, "Redeeming invitation…"));
     try {
         const res = await API.redeemInvitation(token);
-        toast("Joined event via invitation", "success");
+        // Following a link to an event you are already in is not a failure —
+        // the host clicking their own link, or a second tap on the group chat
+        // message. Say so and take them there.
+        if (res.already_member) {
+            toast("You are already a member of this event", "");
+        } else {
+            toast("Joined event via invitation", "success");
+        }
         navigate(`#/events/${res.event_id}`);
     } catch (err) {
         render(

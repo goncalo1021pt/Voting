@@ -52,7 +52,8 @@ Defined by the migrations in `backend/srcs/migrations/`. Core tables:
 - `sessions` — opaque bearer tokens with a 30-day sliding expiry. Every authenticated request extends the session.
 - `events` — top-level awards events. Has a `host_id`, `visibility` (`public` | `invite-only`), `is_active` flag, and `require_full_ballot` flag.
 - `event_members` — join table tracking which users have joined which events. Required before voting.
-- `invitations` — per-event invite tokens, issued by the host and redeemed by a user to join an invite-only event. Optional `expires_at` (NULL = never expires); expired tokens are rejected at redemption.
+- `invitations` — per-event invite tokens, issued by the host and redeemed by users to join an invite-only event. Two nullable limits, both using NULL for "no limit": `expires_at` (NULL = never expires) and `max_uses` (NULL = unlimited, so one link can be posted in a group chat). Expired and used-up tokens are rejected at redemption.
+- `invitation_redemptions` — one row per person a link admitted, with `UNIQUE(invitation_id, user_id)` so a re-clicked link cannot count twice against the cap. This is what replaced the single `redeemed_by`/`redeemed_at` pair, which could only ever describe one redeemer.
 - `categories` — sub-votes inside an event (e.g. *Game of the Year*).
 - `options` — candidates inside a category.
 - `votes` — one row per cast vote. `UNIQUE(category_id, user_id)` enforces the one-vote-per-category rule at the DB level.
@@ -78,12 +79,12 @@ Routed in `backend/srcs/routes.go`:
 | `DELETE` | `/events/{id}` | ✓ host | Delete event |
 | `POST` | `/events/{id}/close` | ✓ host | Close event |
 | `POST` | `/events/{id}/join` | ✓ | Join a public event |
-| `POST` | `/events/{id}/invitations` | ✓ host | Create invite token; optional body `{"expires_in_hours": 1–8760}` |
-| `GET` | `/events/{id}/invitations` | ✓ host | List invitations (outstanding + redeemed) |
-| `DELETE` | `/events/{id}/invitations/{token}` | ✓ host | Revoke an unredeemed invitation |
+| `POST` | `/events/{id}/invitations` | ✓ host | Create invite token; optional body `{"expires_in_hours": 1–8760, "max_uses": 1–10000 \| null}` — `max_uses` absent means single use, `null` means unlimited |
+| `GET` | `/events/{id}/invitations` | ✓ host | List invitations with `uses` and the `redemptions` behind them |
+| `DELETE` | `/events/{id}/invitations/{token}` | ✓ host | Revoke an invitation, used or not; people it already admitted stay members |
 | `GET` | `/events/{id}/members` | ✓ host | List members (host first, then join order) |
 | `DELETE` | `/events/{id}/members/{userId}` | ✓ host | Remove a member; their cast votes are kept |
-| `POST` | `/invitations/{token}` | ✓ | Redeem invite token |
+| `POST` | `/invitations/{token}` | ✓ | Redeem invite token; `already_member: true` when the caller was already in the event |
 | `POST` | `/events/{id}/ballot` | ✓ | Cast a whole ballot atomically; the only way to vote on a `require_full_ballot` event |
 | `POST` | `/votes` | ✓ | Cast one vote; 409 on a `require_full_ballot` event |
 | `GET` | `/events/{id}/results` | — | All-categories results (gated by visibility rules) |
@@ -116,6 +117,8 @@ Backend listens on `:8080`, Postgres on `:5432`. The frontend is reachable at `h
 - **DB enforces invariants** — uniqueness (one vote per category per user, unique invite tokens, unique event membership) is enforced in SQL. Handlers rely on the DB to reject duplicates.
 - **Storage errors propagate** — no loop skips a row on a scan failure and no `Scan` result goes unchecked. Serving an event with a category quietly missing looks like the host never created it, and a dropped result row understates a tally; both are worse than an error the caller can retry.
 - **Authorization distinguishes its outcomes** — `requireHost` answers 404 for an event that doesn't exist, 403 only for a real event the caller doesn't host, and a logged 500 for a lookup failure.
+- **An invitation can admit one person or a crowd** — `max_uses` NULL means unlimited, which is the link a host posts in a group chat; a number caps it; absent from the create body means single use, so a caller that predates the field gets what it always got. Redemptions live in their own table, and the count of them is what gates a capped link. Two details make that count trustworthy: the invitation row is taken `FOR UPDATE` before it is counted, and the count runs as its **own statement** — a waiter released by the locking statement re-reads the row it blocked on, but a subquery inside that same statement keeps the snapshot it started with, which let two concurrent redemptions both see room on a link with one use left.
+- **Redeeming a link you don't need is not an error** — someone already in the event (the host following their own link, a second tap on the group chat message) is turned away with `ErrAlreadyMember` before any use is spent, and the endpoint answers 200 with `already_member: true` so the frontend can take them to the event instead of showing a failure. Letting this through burned a single-use invitation on somebody who was already inside.
 - **Editing an event is a whole-event PUT** — `PUT /events/{id}` carries the event as it should end up, not a diff: a category or option with an `id` is renamed in place, one without is created, and anything left out is deleted. Votes reference option and category rows, so removing a row somebody has voted on would rewrite a tally rather than fix a mistake; the server answers 409 and rolls the whole edit back. Re-parenting an option to another category is refused for the same reason. The frontend's create and edit forms are one builder (`ballotEditor` in `app.js`), which is why the two pages stay in step.
 - **Usernames are the user's to change** — `PATCH /auth/me` renames any account, including one created by Google sign-in, where the initial name is derived from the email address. Only the username moves: the Google subject and the provider email stay put, so a rename can't repoint an identity. `normalizeUsername` trims and collapses whitespace and bounds the result (3–32 characters, letters/digits/spaces/`. _ -`, starting and ending alphanumeric); `UNIQUE(username)` decides conflicts, surfaced as 409.
 - **Ballots are atomic** — `require_full_ballot` cannot be expressed one vote at a time, so `POST /events/{id}/ballot` records the whole ballot in a single transaction: it lands completely or not at all. `POST /votes` stays for lenient events and returns 409 on a strict one. Votes cast earlier count toward completeness, so a voter part-way through can finish with a ballot covering only what's left.
