@@ -30,11 +30,17 @@ type Event struct {
 
 // EventMember represents a user's membership in an event, as returned by the
 // host-only member list. IsHost marks the one row that can't be removed.
+//
+// VotesCast is how many of the event's categories the member has voted in —
+// never which option they picked. That is the whole point of the field: a host
+// chasing a turnout number needs to know who to nudge, not who chose what, so
+// the roster stops exactly at the count.
 type EventMember struct {
-	UserID   int       `json:"user_id"`
-	Username string    `json:"username"`
-	JoinedAt time.Time `json:"joined_at"`
-	IsHost   bool      `json:"is_host"`
+	UserID    int       `json:"user_id"`
+	Username  string    `json:"username"`
+	JoinedAt  time.Time `json:"joined_at"`
+	IsHost    bool      `json:"is_host"`
+	VotesCast int       `json:"votes_cast"`
 }
 
 // Invitation represents an invite to an event. Two fields carry "no limit" as

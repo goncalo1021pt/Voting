@@ -257,14 +257,27 @@ func categoriesWithOptionsFromDB(eventID int) ([]Category, error) {
 
 // IsEventHostFromDB checks if a user is the host of an event
 // ListMembersForEventFromDB returns everyone who has joined an event, host
-// first and then in join order.
+// first and then in join order, each row carrying how many of the event's
+// categories that member has voted in.
+//
+// The vote count is a LEFT JOIN so a member who has voted in nothing still gets
+// a row — they are the ones a host is looking for. It counts DISTINCT
+// categories rather than vote rows so the number can never exceed the category
+// count, and it is scoped through this event's categories, so votes the same
+// user cast in another event stay out of it. Zero here means the same thing as
+// the event's voter_count denominator does, which is why the roster and the
+// "x of y voted" tag cannot disagree.
 func ListMembersForEventFromDB(eventID int) ([]EventMember, error) {
 	rows, err := db.Query(`
-		SELECT m.user_id, u.username, m.joined_at, (m.user_id = e.host_id) AS is_host
+		SELECT m.user_id, u.username, m.joined_at, (m.user_id = e.host_id) AS is_host,
+		       COUNT(DISTINCT v.category_id) AS votes_cast
 		FROM event_members m
 		JOIN users u ON u.id = m.user_id
 		JOIN events e ON e.id = m.event_id
+		LEFT JOIN categories c ON c.event_id = m.event_id
+		LEFT JOIN votes v ON v.category_id = c.id AND v.user_id = m.user_id
 		WHERE m.event_id = $1
+		GROUP BY m.user_id, u.username, m.joined_at, e.host_id
 		ORDER BY is_host DESC, m.joined_at ASC
 	`, eventID)
 	if err != nil {
@@ -275,7 +288,7 @@ func ListMembersForEventFromDB(eventID int) ([]EventMember, error) {
 	members := []EventMember{}
 	for rows.Next() {
 		var m EventMember
-		if err := rows.Scan(&m.UserID, &m.Username, &m.JoinedAt, &m.IsHost); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Username, &m.JoinedAt, &m.IsHost, &m.VotesCast); err != nil {
 			return nil, fmt.Errorf("failed to scan member row: %w", err)
 		}
 		members = append(members, m)
