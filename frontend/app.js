@@ -1428,13 +1428,37 @@ function formatJoinDate(iso) {
     return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
 }
 
+// The vote tag for one member row. `votes_cast` is a count of categories, never
+// a choice, so this can say how far along someone is without leaking a ballot.
+// "not voted" is the one the host is scanning for, so it gets the loud tag.
+function memberVoteTag(member, categoryCount) {
+    if (member.votes_cast === 0) return el("span", { class: "tag danger" }, "not voted");
+    if (categoryCount > 0 && member.votes_cast < categoryCount) {
+        return el("span", { class: "tag subtle" }, `voted ${member.votes_cast} of ${categoryCount}`);
+    }
+    return el("span", { class: "tag success" }, "voted");
+}
+
 // Build the host-only "Members" card. Self-fetches the member list; a removal
 // re-runs the router because it also moves the member/turnout counts in the
 // header. Returns a DOM section node.
-function buildMembersCard(eventId) {
+//
+// The roster is collapsed behind a toggle because it is the third thing on the
+// page and grows without limit — sixteen members already pushed the categories
+// off the first screen. The summary line above it carries the answer a host
+// usually came for ("who still owes me a vote"), so expanding is for acting on
+// that answer, not for finding it.
+function buildMembersCard(eventId, categoryCount) {
     const listMount = el("div", { class: "member-list" });
+    const summaryMount = el("div", { class: "card-meta member-summary" });
+    const filterMount = el("div", { class: "member-filters" });
 
-    function renderList(members) {
+    // Cached so the filter chips re-render from memory instead of refetching.
+    let loaded = [];
+    let filter = "all";
+    let expanded = false;
+
+    function renderRows(members) {
         clear(listMount);
         if (!members.length) {
             listMount.appendChild(el("p", { class: "muted" }, "No members yet."));
@@ -1466,6 +1490,7 @@ function buildMembersCard(eventId) {
                 el("div", { class: "member-row-main" }, [
                     el("span", { class: "option-name" }, `@${m.username}`),
                     m.is_host ? el("span", { class: "tag accent" }, "host") : null,
+                    memberVoteTag(m, categoryCount),
                     el("span", { class: "muted" }, `joined ${formatJoinDate(m.joined_at)}`),
                 ]),
                 m.is_host ? null : el("div", { class: "button-row" }, [removeBtn]),
@@ -1473,10 +1498,68 @@ function buildMembersCard(eventId) {
         });
     }
 
+    function applyFilter() {
+        renderRows(filter === "pending" ? loaded.filter((m) => m.votes_cast === 0) : loaded);
+    }
+
+    function chip(key, label) {
+        return el("button", {
+            class: "chip" + (filter === key ? " active" : ""),
+            type: "button",
+            "aria-pressed": String(filter === key),
+            onClick: () => {
+                filter = key;
+                renderFilters();
+                applyFilter();
+            },
+        }, label);
+    }
+
+    function renderFilters() {
+        clear(filterMount);
+        const pending = loaded.filter((m) => m.votes_cast === 0).length;
+        if (!loaded.length) return;
+        filterMount.appendChild(chip("all", `All (${loaded.length})`));
+        if (pending > 0) filterMount.appendChild(chip("pending", `Not voted (${pending})`));
+    }
+
+    function renderSummary() {
+        clear(summaryMount);
+        if (!loaded.length) return;
+        const pending = loaded.filter((m) => m.votes_cast === 0).length;
+        summaryMount.appendChild(el("span", { class: "tag subtle" },
+            `${loaded.length} member${loaded.length === 1 ? "" : "s"}`));
+        summaryMount.appendChild(el("span", { class: "tag success" },
+            `${loaded.length - pending} voted`));
+        if (pending > 0) {
+            summaryMount.appendChild(el("span", { class: "tag danger" }, `${pending} not voted`));
+        }
+    }
+
+    const toggleBtn = el("button", {
+        class: "secondary",
+        type: "button",
+        "aria-expanded": "false",
+        onClick: () => {
+            expanded = !expanded;
+            body.hidden = !expanded;
+            toggleBtn.textContent = expanded ? "Hide members" : "Show members";
+            toggleBtn.setAttribute("aria-expanded", String(expanded));
+        },
+    }, "Show members");
+
+    const body = el("div", { hidden: true }, [filterMount, listMount]);
+
     async function reload() {
         try {
-            renderList(await API.listMembers(eventId));
+            loaded = await API.listMembers(eventId);
+            renderSummary();
+            renderFilters();
+            applyFilter();
         } catch (err) {
+            loaded = [];
+            clear(summaryMount);
+            clear(filterMount);
             clear(listMount);
             listMount.appendChild(el("p", { class: "muted" }, err.message || "Failed to load members."));
         }
@@ -1488,8 +1571,10 @@ function buildMembersCard(eventId) {
                 el("p", { class: "eyebrow" }, "Members"),
                 el("h2", { style: "margin:0;" }, "Who has joined"),
             ]),
+            el("div", { class: "button-row" }, [toggleBtn]),
         ]),
-        listMount,
+        summaryMount,
+        body,
     ]);
 
     reload();
@@ -1528,61 +1613,68 @@ async function viewEvent({ eventId }) {
         event.require_full_ballot ? el("span", { class: "tag subtle" }, "full ballot required") : null,
     ];
 
-    const headerCard = el("section", {}, [
+    // Collected first so the row can be dropped entirely when it would be empty:
+    // a viewer with no actions available would otherwise get a blank 18px strip
+    // between the tags and the first card.
+    const headerActions = [
+        auth.token && event.visibility === "public" && event.is_active && !event.is_member
+            ? el("button", {
+                class: "secondary",
+                onClick: async () => {
+                    try { await API.joinEvent(event.id); toast("Joined event", "success"); router(); }
+                    catch (err) { toast(err.message || "Failed to join", "error"); }
+                },
+            }, "Join event") : null,
+        isHost ? el("a", {
+            class: "btn secondary",
+            href: `#/events/${event.id}/edit`,
+        }, "Edit event") : null,
+        isHost && event.is_active ? el("button", {
+            class: "danger",
+            onClick: async () => {
+                const ok = await dialog({
+                    eyebrow: "Host action",
+                    title: "Close this event?",
+                    body: "Voting will stop and results will become visible to all members.",
+                    confirm: "Close event",
+                    danger: true,
+                });
+                if (!ok) return;
+                try { await API.closeEvent(event.id); toast("Event closed", "success"); router(); }
+                catch (err) { toast(err.message || "Failed to close", "error"); }
+            },
+        }, "Close event") : null,
+        isHost ? el("button", {
+            class: "danger",
+            onClick: async () => {
+                const ok = await dialog({
+                    eyebrow: "Danger zone",
+                    title: "Delete this event?",
+                    body: "All categories, options, and votes will be permanently removed. This cannot be undone.",
+                    confirm: "Delete event",
+                    danger: true,
+                });
+                if (!ok) return;
+                try { await API.deleteEvent(event.id); toast("Event deleted", "success"); navigate("#/events"); }
+                catch (err) { toast(err.message || "Failed to delete", "error"); }
+            },
+        }, "Delete event") : null,
+    ].filter(Boolean);
+
+    const headerCard = el("section", { class: "event-header" }, [
         el("p", { class: "eyebrow" }, "Event"),
         el("h1", {}, event.name),
         event.description ? el("p", { class: "subtitle" }, event.description) : null,
         el("div", { class: "card-meta" }, tags),
-        el("div", { class: "button-row", style: "margin-top:18px;" }, [
-            auth.token && event.visibility === "public" && event.is_active && !event.is_member
-                ? el("button", {
-                    class: "secondary",
-                    onClick: async () => {
-                        try { await API.joinEvent(event.id); toast("Joined event", "success"); router(); }
-                        catch (err) { toast(err.message || "Failed to join", "error"); }
-                    },
-                }, "Join event") : null,
-            isHost ? el("a", {
-                class: "btn secondary",
-                href: `#/events/${event.id}/edit`,
-            }, "Edit event") : null,
-            isHost && event.is_active ? el("button", {
-                class: "danger",
-                onClick: async () => {
-                    const ok = await dialog({
-                        eyebrow: "Host action",
-                        title: "Close this event?",
-                        body: "Voting will stop and results will become visible to all members.",
-                        confirm: "Close event",
-                        danger: true,
-                    });
-                    if (!ok) return;
-                    try { await API.closeEvent(event.id); toast("Event closed", "success"); router(); }
-                    catch (err) { toast(err.message || "Failed to close", "error"); }
-                },
-            }, "Close event") : null,
-            isHost ? el("button", {
-                class: "danger",
-                onClick: async () => {
-                    const ok = await dialog({
-                        eyebrow: "Danger zone",
-                        title: "Delete this event?",
-                        body: "All categories, options, and votes will be permanently removed. This cannot be undone.",
-                        confirm: "Delete event",
-                        danger: true,
-                    });
-                    if (!ok) return;
-                    try { await API.deleteEvent(event.id); toast("Event deleted", "success"); navigate("#/events"); }
-                    catch (err) { toast(err.message || "Failed to delete", "error"); }
-                },
-            }, "Delete event") : null,
-        ]),
+        headerActions.length
+            ? el("div", { class: "button-row", style: "margin-top:18px;" }, headerActions)
+            : null,
     ]);
 
     const invitationsCard = isHost && event.is_active ? buildInvitationsCard(event.id) : null;
     // Unlike invitations, the roster stays visible after the event closes — a
     // host still wants to see who took part.
-    const membersCard = isHost ? buildMembersCard(event.id) : null;
+    const membersCard = isHost ? buildMembersCard(event.id, categories.length) : null;
 
     // Non-member trying to view an invite-only event — show a wall instead of
     // categories. Must come before the empty-categories check: the redacted

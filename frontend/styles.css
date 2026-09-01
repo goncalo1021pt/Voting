@@ -481,6 +481,13 @@ a.card:hover {
     margin-top: 12px;
 }
 
+/* The event page's title block is a bare section, not a .card, so it carries
+   its own bottom margin — without it the action row underneath sits flush on
+   the first card. Matches the 16px .card uses between siblings. */
+.event-header {
+    margin-bottom: 16px;
+}
+
 /* Tag — small caps, 1px ruled, awards-program flavor */
 .tag {
     display: inline-flex;
@@ -1298,6 +1305,54 @@ main > .skeleton {
     display: flex;
     flex-direction: column;
     margin-top: 18px;
+}
+
+/* Even expanded, the roster is capped: an event can have hundreds of members,
+   and the categories underneath are what the page is actually for. */
+.member-list {
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+/* Turnout at a glance, directly under the card heading — this is what a host
+   opens the card for, so it stays visible while the roster is collapsed. */
+.member-summary {
+    margin-top: 14px;
+}
+
+.member-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+/* A filter chip borrows the tag's shape rather than the button's, because it
+   labels a slice of the list rather than performing an action. */
+.chip {
+    padding: 4px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink-faded);
+    font-family: "Manrope", sans-serif;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color 160ms ease, color 160ms ease;
+}
+
+.chip:hover {
+    border-color: var(--rule-strong);
+    color: var(--ink-soft);
+}
+
+.chip.active {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
 }
 
 .invitation-row,
